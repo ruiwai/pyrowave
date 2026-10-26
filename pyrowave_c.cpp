@@ -1791,7 +1791,6 @@ struct pyrowave_decoder_opaque
 	Device *device = nullptr;
 	pyrowave_device pyro_device = nullptr;
 	Decoder decoder;
-	bool fragment_path = false;
 	ChromaSubsampling chroma = {};
 	int width = 0;
 	int height = 0;
@@ -1858,7 +1857,6 @@ pyrowave_decoder_create(const pyrowave_decoder_create_info *info, pyrowave_decod
 	dec->pyro_device = info->device;
 	dec->device = &info->device->device;
 	dec->chroma = ChromaSubsampling(info->chroma);
-	dec->fragment_path = info->fragment_path;
 	dec->width = info->width;
 	dec->height = info->height;
 
@@ -1943,9 +1941,6 @@ pyrowave_decoder_decode_gpu_buffer_with_scale(pyrowave_decoder decoder,
 	if (decoder->pyro_device->cmd && (acquire || release))
 		return PYROWAVE_ERROR_INVALID_ARGUMENT;
 
-	if (decoder->fragment_path && range_scale != 1.0f)
-		return PYROWAVE_ERROR_NOT_IMPLEMENTED;
-
 	Util::register_thread_index(0);
 
 	Util::set_thread_logging_interface(&null_logger);
@@ -1953,7 +1948,7 @@ pyrowave_decoder_decode_gpu_buffer_with_scale(pyrowave_decoder decoder,
 	device->next_frame_context();
 
 	WrappedViewBuffers views = {};
-	if (!views.wrap(device, buffers, decoder->fragment_path ? VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT : VK_IMAGE_USAGE_STORAGE_BIT))
+	if (!views.wrap(device, buffers, VK_IMAGE_USAGE_STORAGE_BIT))
 		return PYROWAVE_ERROR_OUT_OF_HOST_MEMORY;
 	views.range_scale = range_scale;
 
@@ -1962,13 +1957,9 @@ pyrowave_decoder_decode_gpu_buffer_with_scale(pyrowave_decoder decoder,
 		           ? device->request_borrowed_command_buffer(decoder->pyro_device->cmd)
 		           : device->request_command_buffer(decoder->pyro_device->queue_type);
 
-	VkPipelineStageFlags2 stages = decoder->fragment_path
-		                               ? VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT
-		                               : VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT;
+	VkPipelineStageFlags2 stages = VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT;
 
-	VkAccessFlags2 access = decoder->fragment_path
-		                        ? VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT
-		                        : VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT;
+	VkAccessFlags2 access = VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT;
 
 	if (acquire)
 	{
@@ -2094,9 +2085,6 @@ pyrowave_decoder_decode_cpu_buffer_async(pyrowave_decoder decoder, const pyrowav
 			return PYROWAVE_ERROR_INVALID_ARGUMENT;
 	}
 
-	if (decoder->fragment_path && range_scale != 1.0f)
-		return PYROWAVE_ERROR_NOT_IMPLEMENTED;
-
 	for (int plane = 0; plane < 3; plane++)
 	{
 		auto &img = context.planes[plane];
@@ -2107,17 +2095,9 @@ pyrowave_decoder_decode_cpu_buffer_async(pyrowave_decoder decoder, const pyrowav
 			auto info = ImageCreateInfo::immutable_2d_image(buffers->width, buffers->height,
 					format);
 			info.usage = VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
-			if (decoder->fragment_path)
-			{
-				info.usage |= VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
-				info.initial_layout = VK_IMAGE_LAYOUT_UNDEFINED;
-			}
-			else
-			{
-				info.usage |= VK_IMAGE_USAGE_STORAGE_BIT;
-				info.layout = ImageLayout::General;
-				info.initial_layout = VK_IMAGE_LAYOUT_GENERAL;
-			}
+			info.usage |= VK_IMAGE_USAGE_STORAGE_BIT;
+			info.layout = ImageLayout::General;
+			info.initial_layout = VK_IMAGE_LAYOUT_GENERAL;
 
 			info.misc |= IMAGE_MISC_CONCURRENT_QUEUE_ASYNC_TRANSFER_BIT;
 			if (decoder->pyro_device->queue_type == CommandBuffer::Type::Generic)
@@ -2140,29 +2120,8 @@ pyrowave_decoder_decode_cpu_buffer_async(pyrowave_decoder decoder, const pyrowav
 	if (context.semaphore)
 	{
 		device->add_wait_semaphore(decoder->pyro_device->queue_type, std::move(context.semaphore),
-		                           decoder->fragment_path
-			                           ? VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT
-			                           : VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, true);
+		                           VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, true);
 		context.semaphore = {};
-	}
-
-	if (decoder->fragment_path)
-	{
-		auto cmd = device->request_command_buffer(decoder->pyro_device->queue_type);
-		cmd->begin_barrier_batch();
-
-		for (auto &img : context.planes)
-		{
-			cmd->image_barrier(*img, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL,
-			                   VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, 0,
-			                   VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT_KHR,
-			                   VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT);
-		}
-
-		cmd->end_barrier_batch();
-
-		// This just queues up a command buffer, flush only happens when sync objects are signaled.
-		device->submit(cmd);
 	}
 
 	pyrowave_gpu_buffers gpu_buffers = {};
@@ -2176,7 +2135,7 @@ pyrowave_decoder_decode_cpu_buffer_async(pyrowave_decoder decoder, const pyrowav
 		p.aspect = VK_IMAGE_ASPECT_COLOR_BIT;
 		p.swizzle = VK_COMPONENT_SWIZZLE_IDENTITY;
 		p.view_format = p.image_format;
-		p.layout = decoder->fragment_path ? VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL : VK_IMAGE_LAYOUT_GENERAL;
+		p.layout = VK_IMAGE_LAYOUT_GENERAL;
 	}
 
 	BufferCreateInfo bufinfo = {};
@@ -2187,22 +2146,8 @@ pyrowave_decoder_decode_cpu_buffer_async(pyrowave_decoder decoder, const pyrowav
 
 	auto cmd = device->request_command_buffer(decoder->pyro_device->queue_type);
 
-	if (decoder->fragment_path)
-	{
-		cmd->begin_barrier_batch();
-		for (auto &img : context.planes)
-		{
-			cmd->image_barrier(*img, VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
-				VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT,
-				VK_PIPELINE_STAGE_2_COPY_BIT, VK_ACCESS_2_TRANSFER_READ_BIT);
-		}
-		cmd->end_barrier_batch();
-	}
-	else
-	{
-		cmd->barrier(VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT,
-		             VK_PIPELINE_STAGE_2_COPY_BIT, VK_ACCESS_2_TRANSFER_READ_BIT);
-	}
+	cmd->barrier(VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT,
+	             VK_PIPELINE_STAGE_2_COPY_BIT, VK_ACCESS_2_TRANSFER_READ_BIT);
 
 	Semaphore sem;
 	device->submit(cmd, nullptr, 1, &sem);
