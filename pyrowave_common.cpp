@@ -2,41 +2,9 @@
 // SPDX-License-Identifier: MIT
 #include "pyrowave_common.hpp"
 
-#if PYROWAVE_PRECISION < 0 || PYROWAVE_PRECISION > 2
-#error "PYROWAVE_PRECISION must be in range [0, 2]."
-#endif
-
-constexpr int WaveletFP16Levels = 2;
-
 namespace PyroWave
 {
 using namespace Vulkan;
-
-Configuration::Configuration()
-{
-	precision = PYROWAVE_PRECISION;
-	if (const char *env = getenv("PYROWAVE_PRECISION"))
-		precision = int(strtol(env, nullptr, 0));
-
-	if (precision < 0 || precision > 2)
-	{
-		fprintf(stderr, "pyrowave: precision must be in range [0, 2].\n");
-		precision = PYROWAVE_PRECISION;
-	}
-
-	LOGI("Selection precision level: %d\n", precision);
-}
-
-Configuration &Configuration::get()
-{
-	static Configuration config;
-	return config;
-}
-
-int Configuration::get_precision() const
-{
-	return precision;
-}
 
 void WaveletBuffers::init_samplers()
 {
@@ -58,10 +26,9 @@ void WaveletBuffers::init_samplers()
 
 void WaveletBuffers::allocate_images_fragment()
 {
-	auto format = Configuration::get().get_precision() == 2 ?
-	              VK_FORMAT_R32_SFLOAT : VK_FORMAT_R16_SFLOAT;
-	auto vert_chroma_format = Configuration::get().get_precision() == 2 ?
-	                          VK_FORMAT_R32G32_SFLOAT : VK_FORMAT_R16G16_SFLOAT;
+	// Unreachable in this fork; fragment renderer deletion is deferred.
+	auto format = VK_FORMAT_R16_SFLOAT;
+	auto vert_chroma_format = VK_FORMAT_R16G16_SFLOAT;
 
 	for (int level = 0; level < DecompositionLevels; level++)
 	{
@@ -134,27 +101,16 @@ void WaveletBuffers::allocate_images()
 {
 	auto info = ImageCreateInfo::immutable_2d_image(
 			aligned_width / 2, aligned_height / 2,
-			Configuration::get().get_precision() == 2 ? VK_FORMAT_R32_SFLOAT : VK_FORMAT_R16_SFLOAT);
+			VK_FORMAT_R16_SFLOAT);
 	info.usage = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_STORAGE_BIT |
 	             VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
 	info.initial_layout = VK_IMAGE_LAYOUT_UNDEFINED;
 	info.layers = NumFrequencyBandsPerLevel * NumComponents;
 	info.layout = ImageLayout::General;
-	info.levels = Configuration::get().get_precision() != 1 ? DecompositionLevels : WaveletFP16Levels;
+	info.levels = DecompositionLevels;
 
 	wavelet_img_high_res = device->create_image(info);
 	device->set_name(*wavelet_img_high_res, "wavelet-buffer-high-res");
-
-	if (Configuration::get().get_precision() == 1)
-	{
-		// For the lowest level bands, we want to maintain precision as much as possible and bandwidth here is trivial.
-		info.levels = DecompositionLevels - info.levels;
-		info.format = VK_FORMAT_R32_SFLOAT;
-		info.width >>= WaveletFP16Levels;
-		info.height >>= WaveletFP16Levels;
-		wavelet_img_low_res = device->create_image(info);
-		device->set_name(*wavelet_img_low_res, "wavelet-buffer-low-res");
-	}
 
 	for (int level = 0; level < DecompositionLevels; level++)
 	{
@@ -162,16 +118,8 @@ void WaveletBuffers::allocate_images()
 		view_info.levels = 1;
 		view_info.aspect = VK_IMAGE_ASPECT_COLOR_BIT;
 
-		if (Configuration::get().get_precision() != 1 || level < WaveletFP16Levels)
-		{
-			view_info.base_level = level;
-			view_info.image = wavelet_img_high_res.get();
-		}
-		else
-		{
-			view_info.base_level = level - WaveletFP16Levels;
-			view_info.image = wavelet_img_low_res.get();
-		}
+		view_info.base_level = level;
+		view_info.image = wavelet_img_high_res.get();
 
 		for (int component = 0; component < NumComponents; component++)
 		{
@@ -244,6 +192,12 @@ void WaveletBuffers::init_block_meta()
 
 bool WaveletBuffers::init(Device *device_, int width_, int height_, ChromaSubsampling chroma_, bool fragment_path_)
 {
+	if (!device_ || !device_->get_device_features().vk12_features.shaderFloat16 || fragment_path_)
+	{
+		LOGE("PyroWave requires a non-null shaderFloat16 device and compute path; fragment_path is unsupported.\n");
+		return false;
+	}
+
 	device = device_;
 	width = width_;
 	height = height_;
@@ -279,11 +233,7 @@ bool WaveletBuffers::init(Device *device_, int width_, int height_, ChromaSubsam
 	if (use_readonly_texel_buffer)
 		LOGI("Using texel buffers instead of SSBO.\n");
 
-	shaders = Shaders<>(*device, layout, [this](const char *, const char *env) {
-		if (strcmp(env, "FP16") == 0)
-			return device->get_device_features().vk12_features.shaderFloat16 ? 1 : 0;
-		return 0;
-	});
+	shaders = Shaders<>(*device, layout, nullptr);
 
 	return true;
 }

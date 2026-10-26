@@ -4,6 +4,14 @@ PyroWave is an intra-only video codec (practically speaking a still-image codec)
 that is optimized for extremely fast GPU encode (< ~0.1 ms encode and decode at 1080p, < ~0.2 ms at 4K).
 It is fully implemented in Vulkan compute shaders.
 
+This private Vulkan fork requires `shaderFloat16` for encoding and decoding.
+Wavelet storage and arithmetic are FP16 at every decomposition level; no
+precision switch or FP32 fallback is supported. `fragment_path` must be false.
+The unreachable fragment renderer is retained for deferred deletion.
+The separate Metal backend's committed MSL is unchanged and is outside this
+Windows/Vulkan fork's supported scope. Do not regenerate its old precision
+variants from these shared GLSL sources: they now provide FP16 only.
+
 The targeted bit-rates are quite high (~200+ mbit/s) and the intended use case is
 local network game streaming over ethernet with absolute minimum latency where bandwidth is less of a concern.
 
@@ -115,9 +123,8 @@ HDR mastering/content-light metadata is presentation data, not the PyroWave
 color-metadata structure.
 
 CPU encode/decode selects the scaling factor for each buffer format without
-changing the scaling configured for later GPU calls. The fragment decoder
-does not support non-default scaling, so 10-bit LSB CPU readback returns
-`PYROWAVE_ERROR_NOT_IMPLEMENTED`; 8-bit and 16-bit UNORM readback are supported.
+changing the scaling configured for later GPU calls. Only the compute decoder
+is supported in this private Vulkan fork.
 
 #### Installed static C API
 

@@ -142,14 +142,12 @@ typedef struct pyrowave_luid
 // - Subgroup size control enough to force wave16, wave32 or wave64.
 // - shaderInt16
 // - storageBuffer8BitAccess
-// This covers all desktop GPUs and most mobile GPUs.
-// Optional:
-// - shaderFloat16
+// - shaderFloat16 (mandatory in this private fork)
 // Decoder expects features:
 // - Basic subgroup support. ARITHMETIC, SHUFFLE, SHUFFLE_RELATIVE, VOTE, BALLOT, BASIC (Vulkan 1.1 core).
 // - Subgroup size control (Vulkan 1.3 core).
 // - Anything from wave4 to wave128 goes as long as it supports subgroup size control.
-// Should cover anything remotely relevant.
+// - shaderFloat16 (mandatory in this private fork)
 PYROWAVE_PUBLIC_API pyrowave_result
 pyrowave_create_device(const pyrowave_device_create_info *info, pyrowave_device *device);
 
@@ -368,6 +366,7 @@ PYROWAVE_PUBLIC_API void pyrowave_image_destroy(pyrowave_image image);
 ////
 
 // Encoder API
+// Vulkan shaderFloat16 is mandatory for both encoder and decoder in this fork.
 typedef struct pyrowave_encoder_create_info
 {
 	pyrowave_device device;
@@ -650,12 +649,10 @@ typedef struct pyrowave_decoder_create_info
 	int width;
 	int height;
 	pyrowave_chroma_subsampling chroma;
-	bool fragment_path;
+	bool fragment_path; // Unsupported in this private fork; must be false.
 } pyrowave_decoder_create_info;
 
-// Fragment path is optimized for typical mobile GPUs which have weak compute support.
-// iDWT is instead computed entirely in traditional render passes and fragment shaders.
-// This path is *not* recommended for desktop-class chips.
+// Always false in this private fork: only compute iDWT is supported.
 PYROWAVE_PUBLIC_API bool
 pyrowave_decoder_device_prefers_fragment_path(pyrowave_device device);
 

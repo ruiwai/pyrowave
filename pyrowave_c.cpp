@@ -7,6 +7,7 @@
 #include "image.hpp"
 #include "buffer.hpp"
 #include "pyrowave.h"
+#include "pyrowave_features.hpp"
 #include "pyrowave_decoder.hpp"
 #include "pyrowave_bitstream_header.hpp"
 #include "pyrowave_encoder.hpp"
@@ -159,6 +160,11 @@ pyrowave_result pyrowave_create_device_by_compat(
 	context_opts.lean_memory_mode = true;
 
 	dev->device.set_context(dev->context, context_opts);
+	if (!dev->device.get_device_features().vk12_features.shaderFloat16)
+	{
+		delete dev;
+		return PYROWAVE_ERROR_NO_VULKAN;
+	}
 	*device = dev;
 
 	if (global_priority > VK_QUEUE_GLOBAL_PRIORITY_MEDIUM)
@@ -176,6 +182,11 @@ static std::mutex global_device_lock;
 
 pyrowave_result pyrowave_create_device(const pyrowave_device_create_info *info, pyrowave_device *out_device)
 {
+	if (!info || !out_device || !info->device_create_info)
+		return PYROWAVE_ERROR_INVALID_ARGUMENT;
+	if (!pyrowave_has_enabled_float16(info->device_create_info))
+		return PYROWAVE_ERROR_NO_VULKAN;
+
 	// TODO: Find a better way to do this.
 	Util::set_thread_logging_interface(&null_logger);
 

@@ -198,7 +198,7 @@ float Encoder::Impl::get_quant_resolution(int level, int component, int band) co
 {
 	// FP16 range is limited, and this is more than a good enough initial estimate.
 	return std::min<float>(
-			Configuration::get().get_precision() >= 1 ? 4096.0f : 512.0f,
+			512.0f,
 			get_noise_power_normalized_quant_resolution(level, component, band));
 }
 
@@ -208,7 +208,7 @@ float Encoder::Impl::get_noise_power_normalized_quant_resolution(int level, int 
 	// The low-pass gain for CDF 9/7 is 6 dB (1 bit). Every decomposition level subtracts 6 dB.
 
 	// Maybe make this based on the max rate to have a decent initial estimate.
-	int bits = Configuration::get().get_precision() >= 1 ? 8 : 6;
+	int bits = 6;
 
 	if (band == 0)
 		bits += 2;
@@ -550,7 +550,7 @@ bool Encoder::Impl::dwt(CommandBuffer &cmd, const ViewBuffers &views)
 	} push = {};
 
 	// Forward transforms.
-	cmd.set_program(shaders.dwt[Configuration::get().get_precision()]);
+	cmd.set_program(shaders.dwt);
 
 	// Only need simple 2-lane swaps.
 	cmd.set_subgroup_size_log2(true, 2, 7);
@@ -1257,13 +1257,6 @@ bool Encoder::Impl::encode(CommandBuffer &cmd, const ViewBuffers &views, const B
 	cmd.image_barrier(*wavelet_img_high_res, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL,
 	                  VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0,
 	                  VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT);
-
-	if (wavelet_img_low_res)
-	{
-		cmd.image_barrier(*wavelet_img_low_res, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL,
-		                  VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0,
-		                  VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT);
-	}
 
 	cmd.fill_buffer(*payload_data, 0, 0, 2 * sizeof(uint32_t));
 	cmd.fill_buffer(*bucket_buffer, 0);

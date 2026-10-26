@@ -67,22 +67,11 @@ static inline uint8_t encode_quant(float decoder_q_scale)
 	return (e << 3) | m;
 }
 
-class Configuration
-{
-public:
-	static Configuration &get();
-	int get_precision() const;
-private:
-	Configuration();
-	int precision;
-};
-
 struct WaveletBuffers
 {
 	bool init(Vulkan::Device *device, int width, int height, ChromaSubsampling chroma, bool fragment_path);
 
 	Vulkan::Device *device = nullptr;
-	Vulkan::ImageHandle wavelet_img_low_res;
 	Vulkan::ImageHandle wavelet_img_high_res;
 	Vulkan::SamplerHandle mirror_repeat_sampler;
 	Vulkan::SamplerHandle border_sampler;

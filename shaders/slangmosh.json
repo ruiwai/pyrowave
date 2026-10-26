@@ -3,11 +3,7 @@
 		{
 			"name": "dwt",
 			"compute": true,
-			"path": "dwt.comp",
-			"variants": [
-				{ "define": "PRECISION", "count": 3, "resolve": false },
-				{ "define": "FP16", "count": 2, "resolve": true }
-			]
+			"path": "dwt.comp"
 		},
 		{
 			"name": "block_packing",
@@ -17,11 +13,7 @@
 		{
 			"name": "idwt",
 			"compute": true,
-			"path": "idwt.comp",
-			"variants": [
-				{ "define": "PRECISION", "count": 3, "resolve": false },
-				{ "define": "FP16", "count": 2, "resolve": true }
-			]
+			"path": "idwt.comp"
 		},
 		{
 			"name": "idwt_vs",

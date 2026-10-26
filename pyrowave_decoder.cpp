@@ -341,14 +341,6 @@ bool Decoder::Impl::dequant(CommandBuffer &cmd)
 	                  VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
 	                  VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT);
 
-	if (wavelet_img_low_res)
-	{
-		cmd.image_barrier(*wavelet_img_low_res, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL,
-		                  VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0,
-		                  VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
-		                  VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT);
-	}
-
 	// De-quantize
 	for (int level = 0; level < DecompositionLevels; level++)
 	{
@@ -726,7 +718,7 @@ bool Decoder::Impl::idwt_fragment(CommandBuffer &cmd, const ViewBuffers &views)
 
 bool Decoder::Impl::idwt(CommandBuffer &cmd, const ViewBuffers &views)
 {
-	cmd.set_program(shaders.idwt[Configuration::get().get_precision()]);
+	cmd.set_program(shaders.idwt);
 	cmd.enable_subgroup_size_control(false);
 
 	auto start_idwt = cmd.write_timestamp(VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT);
@@ -940,23 +932,10 @@ void Decoder::Impl::clear()
 	has_color_metadata = false;
 }
 
-bool Decoder::device_prefers_fragment_path(Vulkan::Device &device)
+bool Decoder::device_prefers_fragment_path(Vulkan::Device &)
 {
-	switch (device.get_device_features().driver_id)
-	{
-	// QCOM hardware struggles with compute in general and prefers fragment.
-	// Turnip seems to like compute path just fine though ...
-	case VK_DRIVER_ID_QUALCOMM_PROPRIETARY:
-		return true;
-
-	// Mali heavily favors texture sampling over LS heavy content.
-	case VK_DRIVER_ID_ARM_PROPRIETARY:
-	case VK_DRIVER_ID_MESA_PANVK:
-		return true;
-
-	default:
-		return false;
-	}
+	// Fragment implementation is retained but unreachable; deletion is deferred.
+	return false;
 }
 
 void Decoder::Impl::check_linear_texture_support()
