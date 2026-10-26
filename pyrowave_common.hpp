@@ -121,7 +121,7 @@ struct WaveletBuffers
 
 protected:
 	void init_samplers();
-	void allocate_images();
+	bool allocate_images();
 	void allocate_images_fragment();
 	virtual void init_block_meta();
 	ChromaSubsampling chroma = {};

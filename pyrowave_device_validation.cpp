@@ -5,6 +5,8 @@
 #include "pyrowave.h"
 #include "cli_parser.hpp"
 #include <stdint.h>
+#include <algorithm>
+#include <cstdio>
 #include <string.h>
 #include <future>
 #include <utility>
@@ -41,6 +43,15 @@ static void print_help()
 		"\tIf no device compatibility information is provided, the first Vulkan device will be used.\n");
 }
 
+template <typename T, typename U>
+static bool roundtrip_check(const char *stage, T result, U expected)
+{
+	if (result == expected) return true;
+	std::fprintf(stderr, "roundtrip failed: %s result=%lld expected=%lld\n",
+	             stage, static_cast<long long>(result), static_cast<long long>(expected));
+	return false;
+}
+
 static bool verify_roundtrip(pyrowave_device device)
 {
 	constexpr int Width = 34;
@@ -64,14 +75,14 @@ static bool verify_roundtrip(pyrowave_device device)
 	std::unique_ptr<pyrowave_encoder_opaque, EncoderDeleter> encoder;
 	std::unique_ptr<pyrowave_decoder_opaque, DecoderDeleter> decoder;
 
-	pyrowave_encoder encoder_tmp;
-	pyrowave_decoder decoder_tmp;
+	pyrowave_encoder encoder_tmp = nullptr;
+	pyrowave_decoder decoder_tmp = nullptr;
 
-	if (pyrowave_decoder_create(&decoder_info, &decoder_tmp) != PYROWAVE_SUCCESS)
+	if (!roundtrip_check("decoder_create", pyrowave_decoder_create(&decoder_info, &decoder_tmp), PYROWAVE_SUCCESS))
 		return false;
 	decoder.reset(decoder_tmp);
 
-	if (pyrowave_encoder_create(&encoder_info, &encoder_tmp) != PYROWAVE_SUCCESS)
+	if (!roundtrip_check("encoder_create", pyrowave_encoder_create(&encoder_info, &encoder_tmp), PYROWAVE_SUCCESS))
 		return false;
 	encoder.reset(encoder_tmp);
 
@@ -112,26 +123,29 @@ static bool verify_roundtrip(pyrowave_device device)
 	cpu_buffer.width = Width;
 	cpu_buffer.height = Height;
 	const pyrowave_rate_control rate_control = { 64 * 1024 }; // Just give it something massive.
-	if (pyrowave_encoder_encode_cpu(encoder.get(), &cpu_buffer, &rate_control) != PYROWAVE_SUCCESS)
+	if (!roundtrip_check("encoder_encode_cpu", pyrowave_encoder_encode_cpu(encoder.get(), &cpu_buffer, &rate_control), PYROWAVE_SUCCESS))
 		return false;
 
 	size_t num_packets;
-	if (pyrowave_encoder_compute_num_packets(encoder.get(), 64 * 1024, &num_packets) != PYROWAVE_SUCCESS)
+	if (!roundtrip_check("encoder_compute_num_packets", pyrowave_encoder_compute_num_packets(encoder.get(), 64 * 1024, &num_packets), PYROWAVE_SUCCESS))
 		return false;
-	if (num_packets != 1)
+	if (!roundtrip_check("compute_num_packets.count", num_packets, size_t{1}))
 		return false;
 
 	std::vector<uint8_t> bitstream(64 * 1024);
 	pyrowave_packet packet = {};
-	if (pyrowave_encoder_packetize(encoder.get(), &packet, 64 * 1024, &num_packets, bitstream.data(), bitstream.size()) != PYROWAVE_SUCCESS)
+	if (!roundtrip_check("encoder_packetize", pyrowave_encoder_packetize(encoder.get(), &packet, 64 * 1024, &num_packets, bitstream.data(), bitstream.size()), PYROWAVE_SUCCESS))
 		return false;
-	if (num_packets != 1 || packet.offset != 0 || packet.size == 0 || packet.size > bitstream.size())
+	if (!roundtrip_check("packetize.count", num_packets, size_t{1}) ||
+	    !roundtrip_check("packetize.offset", packet.offset, decltype(packet.offset){0}) ||
+	    !roundtrip_check("packetize.size_nonzero", packet.size != 0, true) ||
+	    !roundtrip_check("packetize.size_in_bounds", packet.size <= bitstream.size(), true))
 		return false;
 	bitstream.resize(packet.size);
 
-	if (pyrowave_decoder_push_packet(decoder.get(), bitstream.data() + packet.offset, packet.size) != PYROWAVE_SUCCESS)
+	if (!roundtrip_check("decoder_push_packet", pyrowave_decoder_push_packet(decoder.get(), bitstream.data() + packet.offset, packet.size), PYROWAVE_SUCCESS))
 		return false;
-	if (!pyrowave_decoder_decode_is_ready(decoder.get(), false))
+	if (!roundtrip_check("decoder_decode_is_ready", pyrowave_decoder_decode_is_ready(decoder.get(), false), true))
 		return false;
 
 	cpu_buffer.data[0] = &decode_luma[0][0];
@@ -143,9 +157,10 @@ static bool verify_roundtrip(pyrowave_device device)
 	cpu_buffer.plane_size_in_bytes[2] = sizeof(decode_cr);
 	cpu_buffer.format = PYROWAVE_CPU_BUFFER_FORMAT_YUV420P;
 
-	if (pyrowave_decoder_decode_cpu_buffer_synchronous(decoder.get(), &cpu_buffer) != PYROWAVE_SUCCESS)
+	if (!roundtrip_check("decoder_decode_cpu_buffer_synchronous", pyrowave_decoder_decode_cpu_buffer_synchronous(decoder.get(), &cpu_buffer), PYROWAVE_SUCCESS))
 		return false;
 
+	int max_y = 0, max_cb = 0, max_cr = 0;
 	for (int y = 0; y < Height; y++)
 	{
 		for (int x = 0; x < Width; x++)
@@ -154,23 +169,21 @@ static bool verify_roundtrip(pyrowave_device device)
 
 			// With the "infinite" bitrate we get here,
 			// accept a maximum 1 ULP error.
-			if (d > 1)
-				return false;
+			if (d > max_y) max_y = d;
 
 			if (y < Height / 2 && x < Width / 2)
 			{
 				// Allow more error for chroma.
 				d = std::abs(int(decode_cb[y][x]) - int(cb[y][x]));
-				if (d > 2)
-					return false;
+				if (d > max_cb) max_cb = d;
 				d = std::abs(int(decode_cr[y][x]) - int(cr[y][x]));
-				if (d > 2)
-					return false;
+				if (d > max_cr) max_cr = d;
 			}
 		}
 	}
 
-	return true;
+	std::fprintf(stderr, "roundtrip max_abs_error: Y=%d Cb=%d Cr=%d; limits: Y=1 Cb=2 Cr=2\n", max_y, max_cb, max_cr);
+	return max_y <= 1 && max_cb <= 2 && max_cr <= 2;
 }
 
 int main(int argc, char **argv)
@@ -214,7 +227,7 @@ int main(int argc, char **argv)
 	// Run this in a thread since the test could just timeout due to hangs/stalls, and we'd have to force-kill the process.
 	std::future<int> async_task = std::async(std::launch::async, [=]() -> int
 	{
-		pyrowave_device device;
+		pyrowave_device device = nullptr;
 		auto ret = pyrowave_create_device_by_compat(
 			vid, pid, nullptr, nullptr, use_luid ? &luid : nullptr, VK_QUEUE_GLOBAL_PRIORITY_MEDIUM, &device);
 

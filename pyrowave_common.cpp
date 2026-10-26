@@ -1,6 +1,7 @@
 // Copyright (c) 2025 Hans-Kristian Arntzen
 // SPDX-License-Identifier: MIT
 #include "pyrowave_common.hpp"
+#include "pyrowave_features.hpp"
 
 namespace PyroWave
 {
@@ -97,7 +98,7 @@ void WaveletBuffers::allocate_images_fragment()
 	}
 }
 
-void WaveletBuffers::allocate_images()
+bool WaveletBuffers::allocate_images()
 {
 	auto info = ImageCreateInfo::immutable_2d_image(
 			aligned_width / 2, aligned_height / 2,
@@ -110,6 +111,8 @@ void WaveletBuffers::allocate_images()
 	info.levels = DecompositionLevels;
 
 	wavelet_img_high_res = device->create_image(info);
+	if (!wavelet_img_high_res)
+		return false;
 	device->set_name(*wavelet_img_high_res, "wavelet-buffer-high-res");
 
 	for (int level = 0; level < DecompositionLevels; level++)
@@ -128,12 +131,17 @@ void WaveletBuffers::allocate_images()
 			view_info.view_type = VK_IMAGE_VIEW_TYPE_2D_ARRAY;
 			view_info.layers = 4;
 			component_layer_views[component][level] = device->create_image_view(view_info);
+			if (!component_layer_views[component][level])
+				return false;
 
 			view_info.view_type = VK_IMAGE_VIEW_TYPE_2D;
 			view_info.layers = 1;
 			component_ll_views[component][level] = device->create_image_view(view_info);
+			if (!component_ll_views[component][level])
+				return false;
 		}
 	}
+	return true;
 }
 
 void WaveletBuffers::accumulate_block_mapping(int blocks_x_8x8, int blocks_y_8x8)
@@ -198,6 +206,14 @@ bool WaveletBuffers::init(Device *device_, int width_, int height_, ChromaSubsam
 		return false;
 	}
 
+	VkFormatProperties3KHR properties = { VK_STRUCTURE_TYPE_FORMAT_PROPERTIES_3_KHR };
+	device_->get_format_properties(VK_FORMAT_R16_SFLOAT, &properties);
+	if (!pyrowave_wavelet_format_supported(properties.optimalTilingFeatures,
+	        device_->get_device_features().enabled_features.shaderStorageImageWriteWithoutFormat))
+	{
+		LOGE("PyroWave requires R16_SFLOAT sampled/storage/transfer support and storage writes without format.\n");
+		return false;
+	}
 	device = device_;
 	width = width_;
 	height = height_;
@@ -210,7 +226,11 @@ bool WaveletBuffers::init(Device *device_, int width_, int height_, ChromaSubsam
 	aligned_height = std::max<int>(aligned_height, MinimumImageSize);
 
 	init_samplers();
-	allocate_images();
+	if (!allocate_images())
+	{
+		LOGE("PyroWave wavelet image or view allocation failed.\n");
+		return false;
+	}
 	if (fragment_path)
 		allocate_images_fragment();
 

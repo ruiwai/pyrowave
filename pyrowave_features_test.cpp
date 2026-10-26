@@ -19,6 +19,16 @@ static void queue_callback(void *)
 
 int main()
 {
+	constexpr VkFormatFeatureFlags2 required[] = {
+		VK_FORMAT_FEATURE_2_SAMPLED_IMAGE_BIT, VK_FORMAT_FEATURE_2_STORAGE_IMAGE_BIT,
+		VK_FORMAT_FEATURE_2_TRANSFER_SRC_BIT, VK_FORMAT_FEATURE_2_TRANSFER_DST_BIT };
+	constexpr auto full = required[0] | required[1] | required[2] | required[3];
+	CHECK(pyrowave_wavelet_format_supported(full, true));
+	CHECK(pyrowave_wavelet_format_supported(full | VK_FORMAT_FEATURE_2_SAMPLED_IMAGE_FILTER_LINEAR_BIT, true));
+	for (auto bit : required)
+		CHECK(!pyrowave_wavelet_format_supported(full & ~bit, true));
+	CHECK(!pyrowave_wavelet_format_supported(full, false));
+
 	VkDeviceCreateInfo device_info = { VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO };
 	CHECK(!pyrowave_has_enabled_float16(nullptr));
 	CHECK(!pyrowave_has_enabled_float16(&device_info));

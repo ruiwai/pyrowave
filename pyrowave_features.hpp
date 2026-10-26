@@ -18,3 +18,10 @@ inline bool pyrowave_has_enabled_float16(const VkDeviceCreateInfo *info) noexcep
 	}
 	return false;
 }
+
+constexpr bool pyrowave_wavelet_format_supported(VkFormatFeatureFlags2 flags, bool storage_write_without_format) noexcept
+{
+	constexpr VkFormatFeatureFlags2 required = VK_FORMAT_FEATURE_2_SAMPLED_IMAGE_BIT | VK_FORMAT_FEATURE_2_STORAGE_IMAGE_BIT |
+	                                          VK_FORMAT_FEATURE_2_TRANSFER_SRC_BIT | VK_FORMAT_FEATURE_2_TRANSFER_DST_BIT;
+	return (flags & required) == required && storage_write_without_format;
+}
