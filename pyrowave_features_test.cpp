@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT AND GPL-3.0-only
 #include "pyrowave.h"
 #include "pyrowave_features.hpp"
+#include "pyrowave_wait.hpp"
 #include <cstdio>
 
 #define CHECK(x) do { if (!(x)) { std::fprintf(stderr, "Failed line %d: %s\n", __LINE__, #x); return 1; } } while (false)
@@ -17,8 +18,26 @@ static void queue_callback(void *)
 	++queue_calls;
 }
 
+struct FakeFence
+{
+	bool result;
+	unsigned calls = 0;
+	uint64_t timeout = 0;
+	bool wait_timeout(uint64_t value) { ++calls; timeout = value; return result; }
+};
+
 int main()
 {
+	FakeFence fence{true};
+	CHECK(pyrowave_wait_for_readback(static_cast<FakeFence *>(nullptr)));
+	CHECK(fence.calls == 0);
+	CHECK(pyrowave_wait_for_readback(&fence));
+	CHECK(fence.calls == 1 && fence.timeout == 1000000000ull);
+	fence.result = false;
+	fence.timeout = 0;
+	CHECK(!pyrowave_wait_for_readback(&fence));
+	CHECK(fence.calls == 2 && fence.timeout == 1000000000ull);
+
 	constexpr VkFormatFeatureFlags2 required[] = {
 		VK_FORMAT_FEATURE_2_SAMPLED_IMAGE_BIT, VK_FORMAT_FEATURE_2_STORAGE_IMAGE_BIT,
 		VK_FORMAT_FEATURE_2_TRANSFER_SRC_BIT, VK_FORMAT_FEATURE_2_TRANSFER_DST_BIT };

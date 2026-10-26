@@ -8,6 +8,7 @@
 #include "buffer.hpp"
 #include "pyrowave.h"
 #include "pyrowave_features.hpp"
+#include "pyrowave_wait.hpp"
 #include "pyrowave_decoder.hpp"
 #include "pyrowave_bitstream_header.hpp"
 #include "pyrowave_encoder.hpp"
@@ -1642,8 +1643,8 @@ pyrowave_encoder_compute_num_packets_with_padding(
 	Util::set_thread_logging_interface(&null_logger);
 
 	auto &context = encoder->contexts[encoder->context];
-	if (context.queued_fence)
-		context.queued_fence->wait();
+	if (!pyrowave_wait_for_readback(context.queued_fence.get()))
+		return PYROWAVE_ERROR_GENERIC;
 
 	if (!context.queued_meta)
 		return PYROWAVE_ERROR_GENERIC;
@@ -1672,8 +1673,8 @@ pyrowave_encoder_compute_num_critical_packets(
 	if (bands < 0 || bands > 4)
 		return PYROWAVE_ERROR_INVALID_ARGUMENT;
 
-	if (context.queued_fence)
-		context.queued_fence->wait();
+	if (!pyrowave_wait_for_readback(context.queued_fence.get()))
+		return PYROWAVE_ERROR_GENERIC;
 
 	if (!context.queued_meta)
 		return PYROWAVE_ERROR_GENERIC;
@@ -1693,8 +1694,8 @@ pyrowave_encoder_packetize_with_padding(
 
 	auto &context = encoder->contexts[encoder->context];
 
-	if (context.queued_fence)
-		context.queued_fence->wait();
+	if (!pyrowave_wait_for_readback(context.queued_fence.get()))
+		return PYROWAVE_ERROR_GENERIC;
 
 	if (!context.queued_meta || !context.queued_bitstream)
 		return PYROWAVE_ERROR_GENERIC;
@@ -1718,8 +1719,8 @@ pyrowave_encoder_get_mapped_raw_bitstream(
 
 	auto &context = encoder->contexts[encoder->context];
 
-	if (context.queued_fence)
-		context.queued_fence->wait();
+	if (!pyrowave_wait_for_readback(context.queued_fence.get()))
+		return PYROWAVE_ERROR_GENERIC;
 
 	if (!context.queued_meta || !context.queued_bitstream)
 		return PYROWAVE_ERROR_GENERIC;
@@ -1753,8 +1754,8 @@ pyrowave_encoder_compute_block_active_words(pyrowave_encoder encoder,
 
 	auto &context = encoder->contexts[encoder->context];
 
-	if (context.queued_fence)
-		context.queued_fence->wait();
+	if (!pyrowave_wait_for_readback(context.queued_fence.get()))
+		return PYROWAVE_ERROR_GENERIC;
 
 	if (!context.queued_meta)
 		return PYROWAVE_ERROR_GENERIC;
