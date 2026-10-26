@@ -108,21 +108,22 @@ static void test_decoder_create_validation()
 	CHECKED(pyrowave_decoder_create(&info, &dummy));
 	pyrowave_decoder_destroy(dummy);
 
-	// Smoke test that creating device on fragment path doesn't explode.
+	// The fragment path is unsupported.
 	info.fragment_path = true;
-	CHECKED(pyrowave_decoder_create(&info, &dummy));
-	pyrowave_decoder_destroy(dummy);
+	dummy = nullptr;
+	ASSERT_THAT(pyrowave_decoder_create(&info, &dummy) == PYROWAVE_ERROR_INVALID_ARGUMENT);
+	ASSERT_THAT(dummy == nullptr);
+	ASSERT_THAT(pyrowave_decoder_device_prefers_fragment_path(device) == false);
 
 	pyrowave_decoder_destroy(decoder);
 	pyrowave_device_destroy(device);
 }
 
-static void test_decode_cpu_buffer_validation(bool fragment_path)
+static void test_decode_cpu_buffer_validation()
 {
 	pyrowave_decoder_create_info info = {};
 	info.width = 16;
 	info.height = 16;
-	info.fragment_path = fragment_path;
 
 	pyrowave_decoder decoder;
 	CHECKED(pyrowave_create_default_device(&info.device));
@@ -176,12 +177,11 @@ static void test_decode_cpu_buffer_validation(bool fragment_path)
 	pyrowave_device_destroy(info.device);
 }
 
-static void test_high_precision_cpu_buffer_readback(bool fragment_path)
+static void test_high_precision_cpu_buffer_readback()
 {
 	pyrowave_decoder_create_info info = {};
 	info.width = 16;
 	info.height = 16;
-	info.fragment_path = fragment_path;
 	pyrowave_decoder decoder;
 	CHECKED(pyrowave_create_default_device(&info.device));
 	CHECKED(pyrowave_decoder_create(&info, &decoder));
@@ -220,13 +220,6 @@ static void test_high_precision_cpu_buffer_readback(bool fragment_path)
 		            PYROWAVE_ERROR_INVALID_ARGUMENT);
 		ASSERT_THAT(pyrowave_decoder_decode_cpu_buffer_complete(decoder, &buffer, -1) ==
 		            PYROWAVE_ERROR_INVALID_ARGUMENT);
-		if (fragment_path)
-		{
-			auto unsupported = buffer;
-			unsupported.format = PYROWAVE_CPU_BUFFER_FORMAT_YUV420P10;
-			ASSERT_THAT(pyrowave_decoder_decode_cpu_buffer_async(decoder, &unsupported, 0) ==
-			            PYROWAVE_ERROR_NOT_IMPLEMENTED);
-		}
 		CHECKED(pyrowave_decoder_decode_cpu_buffer_async(decoder, &buffer, 0));
 		ASSERT_THAT(pyrowave_decoder_decode_cpu_buffer_async(decoder, &buffer, 0) ==
 		            PYROWAVE_ERROR_INVALID_ARGUMENT);
@@ -1003,8 +996,15 @@ static void test_basic_system_stability(bool realtime_prio)
 	pyrowave_device_destroy(device);
 }
 
-int main()
+int main(int argc, char **argv)
 {
+	if (argc > 1)
+	{
+		if (argc != 2 || std::strcmp(argv[1], "--decoder-creation-only") != 0) return 2;
+		test_decoder_create_validation();
+		printf("Passed decoder creation validation :)\n");
+		return 0;
+	}
 	printf("Running system stability test ...\n");
 	test_basic_system_stability(false);
 	printf("Running system stability test ... (REALTIME) \n");
@@ -1026,10 +1026,8 @@ int main()
 
 	// Validate that we handle error inputs gracefully.
 	printf("Running error handling tests ...\n");
-	test_decode_cpu_buffer_validation(false);
-	test_decode_cpu_buffer_validation(true);
-	test_high_precision_cpu_buffer_readback(false);
-	test_high_precision_cpu_buffer_readback(true);
+	test_decode_cpu_buffer_validation();
+	test_high_precision_cpu_buffer_readback();
 	test_encode_cpu_buffer_validation(false);
 	test_encode_cpu_buffer_validation(true);
 	test_encoder_create_validation();
