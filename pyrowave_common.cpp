@@ -1,6 +1,7 @@
 // Copyright (c) 2025 Hans-Kristian Arntzen
 // SPDX-License-Identifier: MIT
 #include "pyrowave_common.hpp"
+#include "pyrowave_features.hpp"
 
 #if PYROWAVE_PRECISION < 0 || PYROWAVE_PRECISION > 2
 #error "PYROWAVE_PRECISION must be in range [0, 2]."
@@ -56,11 +57,11 @@ void WaveletBuffers::init_samplers()
 	border_sampler = device->create_sampler(samp);
 }
 
-void WaveletBuffers::allocate_images_fragment()
+bool WaveletBuffers::allocate_images_fragment()
 {
-	auto format = Configuration::get().get_precision() == 2 ?
+	auto format = precision == 2 ?
 	              VK_FORMAT_R32_SFLOAT : VK_FORMAT_R16_SFLOAT;
-	auto vert_chroma_format = Configuration::get().get_precision() == 2 ?
+	auto vert_chroma_format = precision == 2 ?
 	                          VK_FORMAT_R32G32_SFLOAT : VK_FORMAT_R16G16_SFLOAT;
 
 	for (int level = 0; level < DecompositionLevels; level++)
@@ -81,6 +82,8 @@ void WaveletBuffers::allocate_images_fragment()
 			info.height = horiz_output_height;
 			info.format = format;
 			fragment.levels[level].horiz[comp] = device->create_image(info);
+			if (!fragment.levels[level].horiz[comp])
+				return false;
 			snprintf(label, sizeof(label), "Horiz Output (level %u, comp %u)", level, comp);
 			device->set_name(*fragment.levels[level].horiz[comp], label);
 
@@ -91,6 +94,8 @@ void WaveletBuffers::allocate_images_fragment()
 				info.format = comp == 0 ? format : vert_chroma_format;
 				fragment.levels[level].vert[0][comp] = device->create_image(info);
 				fragment.levels[level].vert[1][comp] = device->create_image(info);
+				if (!fragment.levels[level].vert[0][comp] || !fragment.levels[level].vert[1][comp])
+					return false;
 
 				snprintf(label, sizeof(label), "Vert Even Input (level %u, comp %u)", level, comp);
 				device->set_name(*fragment.levels[level].vert[0][comp], label);
@@ -125,27 +130,46 @@ void WaveletBuffers::allocate_images_fragment()
 				}
 
 				fragment.levels[level].decoded[comp][band] = device->create_image_view(view_info);
+				if (!fragment.levels[level].decoded[comp][band])
+					return false;
 			}
 		}
 	}
+	return true;
 }
 
-void WaveletBuffers::allocate_images()
+bool WaveletBuffers::allocate_images()
 {
+	// Validate every storage format actually used, without imposing FP16 arithmetic
+	// on legacy encoders or decoders (including the fragment decoder).
+	for (auto format : { VK_FORMAT_R16_SFLOAT, VK_FORMAT_R32_SFLOAT })
+	{
+		if ((format == VK_FORMAT_R16_SFLOAT && precision == 2) ||
+		    (format == VK_FORMAT_R32_SFLOAT && precision == 0))
+			continue;
+		VkFormatProperties3 properties = { VK_STRUCTURE_TYPE_FORMAT_PROPERTIES_3 };
+		device->get_format_properties(format, &properties);
+		if (!wavelet_format_supported(properties.optimalTilingFeatures,
+		        device->get_device_features().enabled_features.shaderStorageImageWriteWithoutFormat))
+			return false;
+	}
+
 	auto info = ImageCreateInfo::immutable_2d_image(
 			aligned_width / 2, aligned_height / 2,
-			Configuration::get().get_precision() == 2 ? VK_FORMAT_R32_SFLOAT : VK_FORMAT_R16_SFLOAT);
+			precision == 2 ? VK_FORMAT_R32_SFLOAT : VK_FORMAT_R16_SFLOAT);
 	info.usage = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_STORAGE_BIT |
 	             VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
 	info.initial_layout = VK_IMAGE_LAYOUT_UNDEFINED;
 	info.layers = NumFrequencyBandsPerLevel * NumComponents;
 	info.layout = ImageLayout::General;
-	info.levels = Configuration::get().get_precision() != 1 ? DecompositionLevels : WaveletFP16Levels;
+	info.levels = precision != 1 ? DecompositionLevels : WaveletFP16Levels;
 
 	wavelet_img_high_res = device->create_image(info);
+	if (!wavelet_img_high_res)
+		return false;
 	device->set_name(*wavelet_img_high_res, "wavelet-buffer-high-res");
 
-	if (Configuration::get().get_precision() == 1)
+	if (precision == 1)
 	{
 		// For the lowest level bands, we want to maintain precision as much as possible and bandwidth here is trivial.
 		info.levels = DecompositionLevels - info.levels;
@@ -153,6 +177,8 @@ void WaveletBuffers::allocate_images()
 		info.width >>= WaveletFP16Levels;
 		info.height >>= WaveletFP16Levels;
 		wavelet_img_low_res = device->create_image(info);
+		if (!wavelet_img_low_res)
+			return false;
 		device->set_name(*wavelet_img_low_res, "wavelet-buffer-low-res");
 	}
 
@@ -162,7 +188,7 @@ void WaveletBuffers::allocate_images()
 		view_info.levels = 1;
 		view_info.aspect = VK_IMAGE_ASPECT_COLOR_BIT;
 
-		if (Configuration::get().get_precision() != 1 || level < WaveletFP16Levels)
+		if (precision != 1 || level < WaveletFP16Levels)
 		{
 			view_info.base_level = level;
 			view_info.image = wavelet_img_high_res.get();
@@ -180,12 +206,17 @@ void WaveletBuffers::allocate_images()
 			view_info.view_type = VK_IMAGE_VIEW_TYPE_2D_ARRAY;
 			view_info.layers = 4;
 			component_layer_views[component][level] = device->create_image_view(view_info);
+			if (!component_layer_views[component][level])
+				return false;
 
 			view_info.view_type = VK_IMAGE_VIEW_TYPE_2D;
 			view_info.layers = 1;
 			component_ll_views[component][level] = device->create_image_view(view_info);
+			if (!component_ll_views[component][level])
+				return false;
 		}
 	}
+	return true;
 }
 
 void WaveletBuffers::accumulate_block_mapping(int blocks_x_8x8, int blocks_y_8x8)
@@ -242,13 +273,15 @@ void WaveletBuffers::init_block_meta()
 	}
 }
 
-bool WaveletBuffers::init(Device *device_, int width_, int height_, ChromaSubsampling chroma_, bool fragment_path_)
+bool WaveletBuffers::init(Device *device_, int width_, int height_, ChromaSubsampling chroma_, bool fragment_path_,
+                          int precision_override)
 {
 	device = device_;
 	width = width_;
 	height = height_;
 	chroma = chroma_;
 	fragment_path = fragment_path_;
+	precision = precision_override < 0 ? Configuration::get().get_precision() : precision_override;
 
 	aligned_width = align(width, Alignment);
 	aligned_height = align(height, Alignment);
@@ -256,9 +289,10 @@ bool WaveletBuffers::init(Device *device_, int width_, int height_, ChromaSubsam
 	aligned_height = std::max<int>(aligned_height, MinimumImageSize);
 
 	init_samplers();
-	allocate_images();
-	if (fragment_path)
-		allocate_images_fragment();
+	if (!allocate_images())
+		return false;
+	if (fragment_path && !allocate_images_fragment())
+		return false;
 
 	init_block_meta();
 

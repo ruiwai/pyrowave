@@ -96,6 +96,25 @@ That test also serves as a basic user guide for the API.
 
 #### Buffer and color contracts
 
+`pyrowave_encoder_create_native_fp16` (C) / `Encoder::init_native_fp16` (C++)
+selects per-encoder R16 wavelets and native half DWT arithmetic, without FP32
+fallback or changing decoder precision. Query the enabled device prerequisites
+with `pyrowave_device_supports_native_fp16` / `Encoder::supports_native_fp16`;
+the C query returns false for NULL. Strict creation returns
+`PYROWAVE_ERROR_NOT_IMPLEMENTED` for missing prerequisites before allocation.
+Other initialization failures remain errors; creation never retries the legacy API.
+Create-info structures, API version and bitstream are unchanged.
+
+Legacy creation still uses the compile-time/default `PYROWAVE_PRECISION` and
+its environment override: 0 is half math/storage, 1 is FP32 math with mixed
+R16/R32 storage (the build default), and 2 is full FP32. All shader variants
+remain available. Strict FP16 retains the half-precision quantization cap of
+512 with an initial base of 8 bits; legacy precision 0 keeps its base of 6 bits.
+This is not a promise of lossless output. Decoders, fragment
+decoding, HDR and 4:4:4 remain on their existing paths. For validation,
+`pyrowave-device-validation --roundtrip --native-fp16-encoder` selects only
+the encoder; the decoder still follows the default/environment precision.
+
 CPU output precision is selected by `pyrowave_cpu_buffer.format`: planar
 8-bit, 10-bit LSB-in-16-bit, or 16-bit UNORM. GPU output precision is selected
 by the image/view formats supplied in `pyrowave_gpu_buffers`. The decoder

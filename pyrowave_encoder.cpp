@@ -7,6 +7,7 @@
 #include "image.hpp"
 #include "math.hpp"
 #include "pyrowave_common.hpp"
+#include "pyrowave_features.hpp"
 #include <algorithm>
 #include <cmath>
 
@@ -107,6 +108,7 @@ struct Encoder::Impl final : public WaveletBuffers
 	void compute_block_active_words(int bands, uint32_t *words, size_t word_count, const void *mapped_meta) const;
 
 	uint32_t sequence_count = 0;
+	bool native_fp16 = false;
 	BitstreamColorMetadata color_metadata {};
 
 	// At low bits-per-pixel targets the default CSF weighting is intentionally
@@ -198,7 +200,7 @@ float Encoder::Impl::get_quant_resolution(int level, int component, int band) co
 {
 	// FP16 range is limited, and this is more than a good enough initial estimate.
 	return std::min<float>(
-			Configuration::get().get_precision() >= 1 ? 4096.0f : 512.0f,
+			precision >= 1 ? 4096.0f : 512.0f,
 			get_noise_power_normalized_quant_resolution(level, component, band));
 }
 
@@ -208,7 +210,9 @@ float Encoder::Impl::get_noise_power_normalized_quant_resolution(int level, int 
 	// The low-pass gain for CDF 9/7 is 6 dB (1 bit). Every decomposition level subtracts 6 dB.
 
 	// Maybe make this based on the max rate to have a decent initial estimate.
-	int bits = Configuration::get().get_precision() >= 1 ? 8 : 6;
+	// The strict encoder retains the normal quantization resolution estimate,
+	// while get_quant_resolution still caps half-precision coefficients at 512.
+	int bits = precision >= 1 || native_fp16 ? 8 : 6;
 
 	if (band == 0)
 		bits += 2;
@@ -550,7 +554,7 @@ bool Encoder::Impl::dwt(CommandBuffer &cmd, const ViewBuffers &views)
 	} push = {};
 
 	// Forward transforms.
-	cmd.set_program(shaders.dwt[Configuration::get().get_precision()]);
+	cmd.set_program(shaders.dwt[precision]);
 
 	// Only need simple 2-lane swaps.
 	cmd.set_subgroup_size_log2(true, 2, 7);
@@ -1289,6 +1293,35 @@ Encoder::Encoder()
 
 bool Encoder::init(Device *device, int width_, int height_, ChromaSubsampling chroma_)
 {
+	return init_internal(device, width_, height_, chroma_, false);
+}
+
+bool Encoder::init_native_fp16(Device *device, int width_, int height_, ChromaSubsampling chroma_)
+{
+	return init_internal(device, width_, height_, chroma_, true);
+}
+
+bool Encoder::supports_native_fp16(Device *device)
+{
+	if (!device)
+		return false;
+	VkFormatProperties3 properties = { VK_STRUCTURE_TYPE_FORMAT_PROPERTIES_3 };
+	device->get_format_properties(VK_FORMAT_R16_SFLOAT, &properties);
+	const auto &features = device->get_device_features();
+	return native_fp16_supported(features.vk12_features.shaderFloat16,
+	                             features.enabled_features.shaderStorageImageWriteWithoutFormat,
+	                             properties.optimalTilingFeatures);
+}
+
+bool Encoder::init_internal(Device *device, int width_, int height_, ChromaSubsampling chroma_, bool native)
+{
+	if (!device || width_ <= 0 || height_ <= 0)
+		return false;
+	if (chroma_ == ChromaSubsampling::Chroma420 && (width_ % 2 || height_ % 2))
+		return false;
+	if (native && !supports_native_fp16(device))
+		return false;
+
 	auto ops = device->get_device_features().vk11_props.subgroupSupportedOperations;
 	constexpr VkSubgroupFeatureFlags required_features =
 			VK_SUBGROUP_FEATURE_ARITHMETIC_BIT |
@@ -1317,7 +1350,8 @@ bool Encoder::init(Device *device, int width_, int height_, ChromaSubsampling ch
 	    !device->supports_subgroup_size_log2(true, 6, 6))
 		return false;
 
-	return impl->init(device, width_, height_, chroma_, false);
+	impl->native_fp16 = native;
+	return impl->init(device, width_, height_, chroma_, false, native ? 0 : -1);
 }
 
 bool Encoder::encode(CommandBuffer &cmd, const ViewBuffers &views, const BitstreamBuffers &buffers)

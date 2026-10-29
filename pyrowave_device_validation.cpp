@@ -11,6 +11,8 @@
 #include <chrono>
 #include <thread>
 #include <vector>
+#include <algorithm>
+#include <stdio.h>
 #include "logging.hpp"
 
 #ifdef _WIN32
@@ -37,11 +39,12 @@ static void print_help()
 		"\t[--pid <deviceId of device encoded as hexadecimal>]\n"
 		"\t[--external (verifies support for importing external handles)]\n"
 		"\t[--roundtrip (verifies that encoding and decoding produces sound output)]\n"
+		"\t[--native-fp16-encoder (selects strict FP16 encoder only for roundtrip)]\n"
 		"\t[--timeout <seconds>]\n"
 		"\tIf no device compatibility information is provided, the first Vulkan device will be used.\n");
 }
 
-static bool verify_roundtrip(pyrowave_device device)
+static bool verify_roundtrip(pyrowave_device device, bool native_fp16_encoder)
 {
 	constexpr int Width = 34;
 	constexpr int Height = 30;
@@ -71,8 +74,18 @@ static bool verify_roundtrip(pyrowave_device device)
 		return false;
 	decoder.reset(decoder_tmp);
 
-	if (pyrowave_encoder_create(&encoder_info, &encoder_tmp) != PYROWAVE_SUCCESS)
+	auto encoder_result = native_fp16_encoder
+		? pyrowave_encoder_create_native_fp16(&encoder_info, &encoder_tmp)
+		: pyrowave_encoder_create(&encoder_info, &encoder_tmp);
+	if (encoder_result != PYROWAVE_SUCCESS)
+	{
+		fprintf(stderr, "%s encoder creation failed: result=%d%s\n",
+		        native_fp16_encoder ? "native-fp16" : "default", int(encoder_result),
+		        native_fp16_encoder && !pyrowave_device_supports_native_fp16(device)
+		        ? " (requires enabled shaderFloat16, shaderStorageImageWriteWithoutFormat, and R16_SFLOAT sampled/storage/transfer src/dst)"
+		        : " (encoder initialization failed)");
 		return false;
+	}
 	encoder.reset(encoder_tmp);
 
 	uint8_t luma[Height][Width] = {};
@@ -146,31 +159,29 @@ static bool verify_roundtrip(pyrowave_device device)
 	if (pyrowave_decoder_decode_cpu_buffer_synchronous(decoder.get(), &cpu_buffer) != PYROWAVE_SUCCESS)
 		return false;
 
+	int max_y = 0, max_cb = 0, max_cr = 0;
 	for (int y = 0; y < Height; y++)
 	{
 		for (int x = 0; x < Width; x++)
 		{
 			int d = std::abs(int(decode_luma[y][x]) - int(luma[y][x]));
 
-			// With the "infinite" bitrate we get here,
-			// accept a maximum 1 ULP error.
-			if (d > 1)
-				return false;
+			max_y = std::max(max_y, d);
 
 			if (y < Height / 2 && x < Width / 2)
 			{
 				// Allow more error for chroma.
 				d = std::abs(int(decode_cb[y][x]) - int(cb[y][x]));
-				if (d > 2)
-					return false;
+				max_cb = std::max(max_cb, d);
 				d = std::abs(int(decode_cr[y][x]) - int(cr[y][x]));
-				if (d > 2)
-					return false;
+				max_cr = std::max(max_cr, d);
 			}
 		}
 	}
 
-	return true;
+	fprintf(stderr, "Roundtrip encoder=%s max-errors: Y=%d Cb=%d Cr=%d (limits 1/2/2)\n",
+	        native_fp16_encoder ? "native-fp16" : "default", max_y, max_cb, max_cr);
+	return max_y <= 1 && max_cb <= 2 && max_cr <= 2;
 }
 
 int main(int argc, char **argv)
@@ -182,6 +193,7 @@ int main(int argc, char **argv)
 	bool use_luid = false;
 	bool external = false;
 	bool roundtrip = false;
+	bool native_fp16_encoder = false;
 	int timeout = 0;
 	static_assert(sizeof(luid) == sizeof(uint64_t), "Unexpected LUID size.\n");
 
@@ -196,6 +208,7 @@ int main(int argc, char **argv)
 	cbs.add("--pid", [&](CLIParser &parser) { pid = strtoul(parser.next_string(), nullptr, 16); });
 	cbs.add("--external", [&](CLIParser &) { external = true; });
 	cbs.add("--roundtrip", [&](CLIParser &) { roundtrip = true; });
+	cbs.add("--native-fp16-encoder", [&](CLIParser &) { native_fp16_encoder = true; });
 	cbs.add("--timeout", [&](CLIParser &parser) { timeout = int(parser.next_uint()); });
 	cbs.add("--help", [](CLIParser &parser) { parser.end(); });
 
@@ -227,7 +240,7 @@ int main(int argc, char **argv)
 			return EXIT_CODE_MISSING_SUPPORT;
 		}
 
-		if (roundtrip && !verify_roundtrip(device))
+		if (roundtrip && !verify_roundtrip(device, native_fp16_encoder))
 		{
 			pyrowave_device_destroy(device);
 			return EXIT_CODE_ROUNDTRIP_FAILURE;

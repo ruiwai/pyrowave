@@ -7,6 +7,7 @@
 #include "image.hpp"
 #include "buffer.hpp"
 #include "pyrowave.h"
+#include "pyrowave_wait.hpp"
 #include "pyrowave_decoder.hpp"
 #include "pyrowave_bitstream_header.hpp"
 #include "pyrowave_encoder.hpp"
@@ -454,6 +455,11 @@ void pyrowave_device_destroy(pyrowave_device device)
 	Util::set_thread_logging_interface(&null_logger);
 
 	delete device;
+}
+
+bool pyrowave_device_supports_native_fp16(pyrowave_device device)
+{
+	return device && Encoder::supports_native_fp16(&device->device);
 }
 
 struct pyrowave_sync_object_opaque
@@ -955,12 +961,12 @@ pyrowave_encoder_set_color_metadata(pyrowave_encoder encoder,
 	return PYROWAVE_SUCCESS;
 }
 
-pyrowave_result
-pyrowave_encoder_create(const pyrowave_encoder_create_info *info, pyrowave_encoder *encoder)
+static pyrowave_result
+pyrowave_encoder_create_internal(const pyrowave_encoder_create_info *info, pyrowave_encoder *encoder, bool native)
 {
 	Util::set_thread_logging_interface(&null_logger);
 
-	if (!info->device)
+	if (!info || !encoder || !info->device)
 		return PYROWAVE_ERROR_INVALID_ARGUMENT;
 
 	if (info->width <= 0 || info->height <= 0)
@@ -969,6 +975,9 @@ pyrowave_encoder_create(const pyrowave_encoder_create_info *info, pyrowave_encod
 	if (info->chroma == PYROWAVE_CHROMA_SUBSAMPLING_420 && (info->width % 2 || info->height % 2))
 		return PYROWAVE_ERROR_INVALID_ARGUMENT;
 
+	if (native && !pyrowave_device_supports_native_fp16(info->device))
+		return PYROWAVE_ERROR_NOT_IMPLEMENTED;
+
 	auto *enc = new pyrowave_encoder_opaque();
 	enc->pyro_device = info->device;
 	enc->device = &info->device->device;
@@ -976,7 +985,10 @@ pyrowave_encoder_create(const pyrowave_encoder_create_info *info, pyrowave_encod
 	enc->width = info->width;
 	enc->height = info->height;
 
-	if (!enc->encoder.init(&info->device->device, info->width, info->height, enc->chroma))
+	bool initialized = native
+		? enc->encoder.init_native_fp16(enc->device, info->width, info->height, enc->chroma)
+		: enc->encoder.init(enc->device, info->width, info->height, enc->chroma);
+	if (!initialized)
 	{
 		delete enc;
 		return PYROWAVE_ERROR_GENERIC;
@@ -988,6 +1000,18 @@ pyrowave_encoder_create(const pyrowave_encoder_create_info *info, pyrowave_encod
 
 	*encoder = enc;
 	return PYROWAVE_SUCCESS;
+}
+
+pyrowave_result
+pyrowave_encoder_create(const pyrowave_encoder_create_info *info, pyrowave_encoder *encoder)
+{
+	return pyrowave_encoder_create_internal(info, encoder, false);
+}
+
+pyrowave_result
+pyrowave_encoder_create_native_fp16(const pyrowave_encoder_create_info *info, pyrowave_encoder *encoder)
+{
+	return pyrowave_encoder_create_internal(info, encoder, true);
 }
 
 struct WrappedViewBuffers : ViewBuffers
@@ -1631,8 +1655,8 @@ pyrowave_encoder_compute_num_packets_with_padding(
 	Util::set_thread_logging_interface(&null_logger);
 
 	auto &context = encoder->contexts[encoder->context];
-	if (context.queued_fence)
-		context.queued_fence->wait();
+	if (!pyrowave_wait_for_readback(context.queued_fence.get()))
+		return PYROWAVE_ERROR_GENERIC;
 
 	if (!context.queued_meta)
 		return PYROWAVE_ERROR_GENERIC;
@@ -1661,8 +1685,8 @@ pyrowave_encoder_compute_num_critical_packets(
 	if (bands < 0 || bands > 4)
 		return PYROWAVE_ERROR_INVALID_ARGUMENT;
 
-	if (context.queued_fence)
-		context.queued_fence->wait();
+	if (!pyrowave_wait_for_readback(context.queued_fence.get()))
+		return PYROWAVE_ERROR_GENERIC;
 
 	if (!context.queued_meta)
 		return PYROWAVE_ERROR_GENERIC;
@@ -1682,8 +1706,8 @@ pyrowave_encoder_packetize_with_padding(
 
 	auto &context = encoder->contexts[encoder->context];
 
-	if (context.queued_fence)
-		context.queued_fence->wait();
+	if (!pyrowave_wait_for_readback(context.queued_fence.get()))
+		return PYROWAVE_ERROR_GENERIC;
 
 	if (!context.queued_meta || !context.queued_bitstream)
 		return PYROWAVE_ERROR_GENERIC;
@@ -1707,8 +1731,8 @@ pyrowave_encoder_get_mapped_raw_bitstream(
 
 	auto &context = encoder->contexts[encoder->context];
 
-	if (context.queued_fence)
-		context.queued_fence->wait();
+	if (!pyrowave_wait_for_readback(context.queued_fence.get()))
+		return PYROWAVE_ERROR_GENERIC;
 
 	if (!context.queued_meta || !context.queued_bitstream)
 		return PYROWAVE_ERROR_GENERIC;
@@ -1742,8 +1766,8 @@ pyrowave_encoder_compute_block_active_words(pyrowave_encoder encoder,
 
 	auto &context = encoder->contexts[encoder->context];
 
-	if (context.queued_fence)
-		context.queued_fence->wait();
+	if (!pyrowave_wait_for_readback(context.queued_fence.get()))
+		return PYROWAVE_ERROR_GENERIC;
 
 	if (!context.queued_meta)
 		return PYROWAVE_ERROR_GENERIC;

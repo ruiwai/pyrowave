@@ -37,6 +37,8 @@ public:
 	};
 
 	bool init(Vulkan::Device *device, int width, int height, ChromaSubsampling chroma);
+	bool init_native_fp16(Vulkan::Device *device, int width, int height, ChromaSubsampling chroma);
+	static bool supports_native_fp16(Vulkan::Device *device);
 	void set_color_metadata(const BitstreamColorMetadata &metadata);
 	bool encode(Vulkan::CommandBuffer &cmd, const ViewBuffers &views, const BitstreamBuffers &buffers);
 
@@ -86,6 +88,7 @@ public:
 	size_t compute_num_critical_packets(int bands, const void *mapped_meta, size_t packet_boundary, size_t padding_size = 0) const;
 
 private:
+	bool init_internal(Vulkan::Device *device, int width, int height, ChromaSubsampling chroma, bool native);
 	struct Impl;
 	std::unique_ptr<Impl> impl;
 };

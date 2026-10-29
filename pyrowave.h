@@ -212,6 +212,11 @@ pyrowave_device_set_queue_type(pyrowave_device device, VkQueueFlagBits queue_fla
 PYROWAVE_PUBLIC_API bool
 pyrowave_device_confirm_interop_support(pyrowave_device device);
 
+// Enabled FP16 arithmetic, storage writes without format, and R16_SFLOAT
+// optimal-tiling sampled/storage/transfer support. False for NULL.
+PYROWAVE_PUBLIC_API bool
+pyrowave_device_supports_native_fp16(pyrowave_device device);
+
 // All encoders and decoders must have been destroyed before destroying the device.
 PYROWAVE_PUBLIC_API void pyrowave_device_destroy(pyrowave_device device);
 ////
@@ -497,6 +502,12 @@ typedef struct pyrowave_rate_control
 // The entry points for encoder are not thread safe. Application must ensure synchronization.
 PYROWAVE_PUBLIC_API pyrowave_result
 pyrowave_encoder_create(const pyrowave_encoder_create_info *info, pyrowave_encoder *encoder);
+
+// Strict per-encoder FP16 wavelets, independent of the default/environment precision.
+// Returns NOT_IMPLEMENTED if native FP16 prerequisites are missing; never falls back.
+// Uses the unchanged create-info and wire protocol; does not select decoder precision.
+PYROWAVE_PUBLIC_API pyrowave_result
+pyrowave_encoder_create_native_fp16(const pyrowave_encoder_create_info *info, pyrowave_encoder *encoder);
 
 // Special purpose when encoding formats like yuv420p10 or yuv444p10 as used in e.g. FFmpeg.
 // CPU encode chooses its own per-call factor without changing this GPU setting.

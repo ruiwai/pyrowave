@@ -162,6 +162,14 @@ endif()
 
 target_link_libraries(pyrowave PRIVATE granite-vulkan granite-math)
 
+if (PYROWAVE_BUILD_TESTS)
+    enable_testing()
+    add_executable(pyrowave-native-fp16-test pyrowave_native_fp16_test.cpp pyrowave_features.hpp)
+    target_link_libraries(pyrowave-native-fp16-test PRIVATE granite-volk-headers)
+    target_compile_options(pyrowave-native-fp16-test PRIVATE ${PYROWAVE_CXX_FLAGS})
+    add_test(NAME pyrowave-native-fp16-test COMMAND pyrowave-native-fp16-test)
+endif()
+
 if (PYROWAVE_IS_TOP_LEVEL AND NOT PYROWAVE_BUILD_SHARED AND NOT PYROWAVE_BUILD_STATIC_C_API)
     message(FATAL_ERROR "At least one PyroWave C API runtime must be enabled")
 endif()

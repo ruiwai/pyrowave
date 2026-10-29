@@ -79,7 +79,9 @@ private:
 
 struct WaveletBuffers
 {
-	bool init(Vulkan::Device *device, int width, int height, ChromaSubsampling chroma, bool fragment_path);
+	bool init(Vulkan::Device *device, int width, int height, ChromaSubsampling chroma, bool fragment_path,
+	          int precision_override = -1);
+	int precision = 0;
 
 	Vulkan::Device *device = nullptr;
 	Vulkan::ImageHandle wavelet_img_low_res;
@@ -132,8 +134,8 @@ struct WaveletBuffers
 
 protected:
 	void init_samplers();
-	void allocate_images();
-	void allocate_images_fragment();
+	bool allocate_images();
+	bool allocate_images_fragment();
 	virtual void init_block_meta();
 	ChromaSubsampling chroma = {};
 
