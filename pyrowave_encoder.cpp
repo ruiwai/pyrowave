@@ -10,6 +10,7 @@
 #include "pyrowave_features.hpp"
 #include <algorithm>
 #include <cmath>
+#include <cstddef>
 
 namespace PyroWave
 {
@@ -32,12 +33,21 @@ struct QuantizerPushData
 	ivec2 resolution;
 	ivec2 resolution_8x8_blocks;
 	vec2 inv_resolution;
-	float input_layer;
-	float quant_resolution;
-	int32_t block_offset;
+	int32_t first_band;
 	int32_t block_stride;
-	float rdo_distortion_scale;
+	vec4 quant_resolution;
+	vec4 rdo_distortion_scale;
+	ivec4 block_offset;
 };
+static_assert(sizeof(QuantizerPushData) == 80);
+static_assert(offsetof(QuantizerPushData, resolution) == 0);
+static_assert(offsetof(QuantizerPushData, resolution_8x8_blocks) == 8);
+static_assert(offsetof(QuantizerPushData, inv_resolution) == 16);
+static_assert(offsetof(QuantizerPushData, first_band) == 24);
+static_assert(offsetof(QuantizerPushData, block_stride) == 28);
+static_assert(offsetof(QuantizerPushData, quant_resolution) == 32);
+static_assert(offsetof(QuantizerPushData, rdo_distortion_scale) == 48);
+static_assert(offsetof(QuantizerPushData, block_offset) == 64);
 
 struct BlockPackingPushData
 {
@@ -508,35 +518,31 @@ bool Encoder::Impl::quant(CommandBuffer &cmd, float quant_scale)
 			snprintf(label, sizeof(label), "DWT quant, level %d, component %d", level, component);
 			cmd.begin_region(label);
 
-			for (int band = (level == DecompositionLevels - 1 ? 0 : 1); band < 4; band++)
+			push.resolution.x = wavelet_img_high_res->get_width(level);
+			push.resolution.y = wavelet_img_high_res->get_height(level);
+			push.resolution_8x8_blocks.x = (push.resolution.x + 7) / 8;
+			push.resolution_8x8_blocks.y = (push.resolution.y + 7) / 8;
+			push.inv_resolution.x = 1.0f / float(push.resolution.x);
+			push.inv_resolution.y = 1.0f / float(push.resolution.y);
+			push.first_band = (level == DecompositionLevels - 1 ? 0 : 1);
+			// init_block_meta gives every band at this component/level the same stride.
+			push.block_stride = block_meta[component][level][push.first_band].block_stride_8x8;
+			for (int band = push.first_band; band < 4; band++)
 			{
 				float quant_res = quant_scale < 0.0f ? get_quant_resolution(level, component, band) : quant_scale;
-
-				push.resolution.x = wavelet_img_high_res->get_width(level);
-				push.resolution.y = wavelet_img_high_res->get_height(level);
-				push.resolution_8x8_blocks.x = (push.resolution.x + 7) / 8;
-				push.resolution_8x8_blocks.y = (push.resolution.y + 7) / 8;
-				push.inv_resolution.x = 1.0f / float(push.resolution.x);
-				push.inv_resolution.y = 1.0f / float(push.resolution.y);
-				push.input_layer = float(band);
-				push.quant_resolution = 1.0f / decode_quant(encode_quant(1.0f / quant_res));
-				push.rdo_distortion_scale = get_quant_rdo_distortion_scale(level, component, band) * (1.0f / 256.0f);
-
-				int blocks_x = (push.resolution.x + 31) / 32;
-				int blocks_y = (push.resolution.y + 31) / 32;
-
-				push.block_offset = block_meta[component][level][band].block_offset_8x8;
-				push.block_stride = block_meta[component][level][band].block_stride_8x8;
-
-				cmd.push_constants(&push, 0, sizeof(push));
-
-				cmd.set_texture(0, 0, *component_layer_views[component][level], *border_sampler);
-				cmd.set_storage_buffer(0, 1, *meta_buffer);
-				cmd.set_storage_buffer(0, 2, *block_stat_buffer);
-				cmd.set_storage_buffer(0, 3, *payload_data);
-
-				cmd.dispatch(blocks_x, blocks_y, 1);
+				push.quant_resolution[band] = 1.0f / decode_quant(encode_quant(1.0f / quant_res));
+				push.rdo_distortion_scale[band] = get_quant_rdo_distortion_scale(level, component, band) * (1.0f / 256.0f);
+				push.block_offset[band] = block_meta[component][level][band].block_offset_8x8;
 			}
+
+			int blocks_x = (push.resolution.x + 31) / 32;
+			int blocks_y = (push.resolution.y + 31) / 32;
+			cmd.push_constants(&push, 0, sizeof(push));
+			cmd.set_texture(0, 0, *component_layer_views[component][level], *border_sampler);
+			cmd.set_storage_buffer(0, 1, *meta_buffer);
+			cmd.set_storage_buffer(0, 2, *block_stat_buffer);
+			cmd.set_storage_buffer(0, 3, *payload_data);
+			cmd.dispatch(blocks_x, blocks_y, 4 - push.first_band);
 
 			cmd.end_region();
 		}

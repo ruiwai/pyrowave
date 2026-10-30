@@ -229,3 +229,16 @@ the same `PYROWAVE_PRECISION=1`, device, input and benchmark configuration.
 Its repeated fixed static input is not representative of live changing frames;
 check completed timing output, not just the process exit status.
 
+
+### Experimental quant band batching
+
+Quant dispatches batch the active bands of each component/level in Z (420:
+42 to 13 dispatches; 444: 48 to 15). Quantization, distortion calculations,
+partial-block masks and the per-cluster atomic allocation scheme are unchanged;
+analyze/RDO, DWT and packing are outside this change. No GPU runtime proof,
+quality equivalence or performance improvement is claimed.
+The embedded header retains all non-quant modules and reflection byte-for-byte:
+compile a candidate with `slangmosh --output <candidate> shaders/slangmosh.json
+--namespace PyroWave -O --strip`, splice only its quant module, append its quant
+reflection to the old reflection bank, and update offsets/only the quant reflection
+reference. The artifact-only merge script validates ranges and per-entry hashes.
