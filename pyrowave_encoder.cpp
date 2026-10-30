@@ -19,6 +19,14 @@ namespace PyroWave
 using namespace Granite;
 using namespace Vulkan;
 
+namespace {
+struct FinePrequantResetGuard
+{
+	Encoder &encoder;
+	~FinePrequantResetGuard() { encoder.set_fine_prequantization_allowed(false); }
+};
+}
+
 static constexpr int BlockSpaceSubdivision = 16;
 static constexpr int NumRDOBuckets = 128;
 static constexpr int RDOBucketOffset = 64;
@@ -122,6 +130,9 @@ struct Encoder::Impl final : public WaveletBuffers
 	uint32_t sequence_count = 0;
 	bool native_fp16 = false;
 	bool coarse_rdo = true;
+	bool fine_prequant_enabled = true;
+	bool fine_prequant_active = false;
+	bool fine_prequant_next_frame = false;
 	BitstreamColorMetadata color_metadata {};
 
 	// At low bits-per-pixel targets the default CSF weighting is intentionally
@@ -134,6 +145,11 @@ struct Encoder::Impl final : public WaveletBuffers
 
 	void update_low_rate_detail_profile(size_t target_payload_size);
 };
+
+void Encoder::set_fine_prequantization_allowed(bool allowed)
+{
+	impl->fine_prequant_next_frame = allowed;
+}
 
 void Encoder::set_color_metadata(const BitstreamColorMetadata &metadata)
 {
@@ -192,6 +208,9 @@ float Encoder::Impl::get_quant_rdo_distortion_scale(int level, int component, in
 
 void Encoder::Impl::update_low_rate_detail_profile(size_t target_payload_size)
 {
+	const bool allowed = fine_prequant_next_frame;
+	fine_prequant_next_frame = false;
+	fine_prequant_active = false;
 	if (width <= 0 || height <= 0 || target_payload_size == 0)
 	{
 		low_rate_detail_strength = 0.0f;
@@ -200,6 +219,7 @@ void Encoder::Impl::update_low_rate_detail_profile(size_t target_payload_size)
 
 	const double bits_per_pixel =
 		double(target_payload_size) * 8.0 / (double(width) * double(height));
+	fine_prequant_active = fine_prequant_enabled && allowed && bits_per_pixel <= 2.0;
 
 	// Full detail bias starts below 0.25 bits/pixel and fades out by
 	// 0.75 bits/pixel. These are per-frame bits, so the profile naturally
@@ -212,9 +232,12 @@ void Encoder::Impl::update_low_rate_detail_profile(size_t target_payload_size)
 float Encoder::Impl::get_quant_resolution(int level, int component, int band) const
 {
 	// FP16 range is limited, and this is more than a good enough initial estimate.
-	return std::min<float>(
+	float resolution = std::min<float>(
 			precision >= 1 ? 4096.0f : 512.0f,
 			get_noise_power_normalized_quant_resolution(level, component, band));
+	if (fine_prequant_active && level < 2 && band != 0)
+		resolution *= 0.5f;
+	return resolution;
 }
 
 float Encoder::Impl::get_noise_power_normalized_quant_resolution(int level, int component, int band) const
@@ -1312,6 +1335,8 @@ Encoder::Encoder()
 	impl.reset(new Impl);
 	const char *full_search = std::getenv("PYROWAVE_RDO_FULL_SEARCH");
 	impl->coarse_rdo = !full_search || std::strcmp(full_search, "1") != 0;
+	const char *fine_prequant = std::getenv("PYROWAVE_FINE_PREQUANT");
+	impl->fine_prequant_enabled = !fine_prequant || std::strcmp(fine_prequant, "0") != 0;
 }
 
 bool Encoder::init(Device *device, int width_, int height_, ChromaSubsampling chroma_)
@@ -1379,6 +1404,7 @@ bool Encoder::init_internal(Device *device, int width_, int height_, ChromaSubsa
 
 bool Encoder::encode(CommandBuffer &cmd, const ViewBuffers &views, const BitstreamBuffers &buffers)
 {
+	FinePrequantResetGuard reset { *this };
 	return impl->encode(cmd, views, buffers);
 }
 
@@ -1389,6 +1415,7 @@ const Vulkan::ImageView &Encoder::get_wavelet_band(int component, int level)
 
 bool Encoder::encode_pre_transformed(Vulkan::CommandBuffer &cmd, const BitstreamBuffers &buffers, float quant_scale)
 {
+	FinePrequantResetGuard reset { *this };
 	return impl->encode_pre_transformed(cmd, buffers, quant_scale);
 }
 

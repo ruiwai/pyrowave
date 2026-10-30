@@ -509,6 +509,12 @@ pyrowave_encoder_create(const pyrowave_encoder_create_info *info, pyrowave_encod
 PYROWAVE_PUBLIC_API pyrowave_result
 pyrowave_encoder_create_native_fp16(const pyrowave_encoder_create_info *info, pyrowave_encoder *encoder);
 
+// One-shot allowance for the next attempted encode, including failure; false by default.
+// allowed must be VK_FALSE or VK_TRUE; null encoder/invalid value returns INVALID_ARGUMENT.
+// The environment cannot force eligibility. Serialize with all calls on the same encoder.
+PYROWAVE_PUBLIC_API pyrowave_result
+pyrowave_encoder_set_fine_prequantization_allowed(pyrowave_encoder encoder, VkBool32 allowed);
+
 // Special purpose when encoding formats like yuv420p10 or yuv444p10 as used in e.g. FFmpeg.
 // CPU encode chooses its own per-call factor without changing this GPU setting.
 // Defaults to 1.0. For e.g. 10-bit LSB encoding stored in UNORM16, use factor of 0xffff / 0x3ff.

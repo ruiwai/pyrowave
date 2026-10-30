@@ -39,6 +39,8 @@ public:
 	bool init(Vulkan::Device *device, int width, int height, ChromaSubsampling chroma);
 	bool init_native_fp16(Vulkan::Device *device, int width, int height, ChromaSubsampling chroma);
 	static bool supports_native_fp16(Vulkan::Device *device);
+	// One-shot eligibility for the next attempted encode (including failure/exception); defaults to false.
+	void set_fine_prequantization_allowed(bool allowed);
 	void set_color_metadata(const BitstreamColorMetadata &metadata);
 	bool encode(Vulkan::CommandBuffer &cmd, const ViewBuffers &views, const BitstreamBuffers &buffers);
 

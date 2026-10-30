@@ -257,3 +257,25 @@ Known preexisting limitation: extreme `encode_pre_transformed` inputs can overfl
 checked domain is baseline-in-bounds stats (num_planes 0 through 14), not all inputs.
 Regeneration replaces only quant/analyze modules and appends their reflections,
 preserving the other 23 entries and existing reflection aliases.
+
+### Bitrate-aware one-bit fine-band prequantization
+
+Inactive by default: the caller must explicitly allow each next encode via
+`pyrowave_encoder_set_fine_prequantization_allowed` / `Encoder::set_fine_prequantization_allowed`.
+Allowance is consumed by the next attempted encode, including failures before profiling.
+Sunshine on Windows grants it only for actual borrowed VDD frames after successful
+fused direct conversion. CPU, DDX, copied, general-converter and blank frames keep
+prior quantization. Allowed frames still require payload budgets <= 2 bits per
+actual luma pixel per frame (1080p60: approximately 248.832 Mb/s payload),
+for both 4:2:0 and 4:4:4.
+Level 0/1 non-LL bands, including chroma where present, use half the existing
+precision-capped resolution: twice the initial quantization step, not band zeroing.
+LL, levels >= 2 and budgets above the threshold are unaffected.
+Set `PYROWAVE_FINE_PREQUANT=0` before Encoder construction to opt out unconditionally; only exact
+`0` disables it, and the environment is read once per Encoder. This is independent
+of `PYROWAVE_RDO_FULL_SEARCH`: full search does not disable prequantization.
+The budget profile resets each frame; explicit nonnegative quant-scale overrides
+remain unchanged. Noise normalization, distortion weighting, shaders, decoding
+and the existing budget resolver are unchanged; no stronger bitrate guarantee is
+introduced. Texture and text can soften; quality loss is not guaranteed small.
+No measured performance improvement or GPU/quality validation is claimed.

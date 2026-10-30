@@ -20,6 +20,14 @@ using namespace Granite;
 using namespace Vulkan;
 using namespace PyroWave;
 
+namespace {
+struct FinePrequantResetGuard
+{
+	Encoder &encoder;
+	~FinePrequantResetGuard() { encoder.set_fine_prequantization_allowed(false); }
+};
+}
+
 struct NullLogger : Util::LoggingInterface
 {
 	bool log(const char *, const char *, va_list) override
@@ -1014,6 +1022,15 @@ pyrowave_encoder_create_native_fp16(const pyrowave_encoder_create_info *info, py
 	return pyrowave_encoder_create_internal(info, encoder, true);
 }
 
+pyrowave_result
+pyrowave_encoder_set_fine_prequantization_allowed(pyrowave_encoder encoder, VkBool32 allowed)
+{
+	if (!encoder || (allowed != VK_FALSE && allowed != VK_TRUE))
+		return PYROWAVE_ERROR_INVALID_ARGUMENT;
+	encoder->encoder.set_fine_prequantization_allowed(allowed == VK_TRUE);
+	return PYROWAVE_SUCCESS;
+}
+
 struct WrappedViewBuffers : ViewBuffers
 {
 	ImageHandle wrapped_images[3];
@@ -1271,6 +1288,9 @@ pyrowave_encoder_encode_gpu(pyrowave_encoder encoder,
                             const pyrowave_gpu_buffers *buffers,
                             const pyrowave_rate_control *rate_control)
 {
+	if (!encoder) return PYROWAVE_ERROR_INVALID_ARGUMENT;
+	FinePrequantResetGuard reset { encoder->encoder };
+	if (!buffers || !rate_control) return PYROWAVE_ERROR_INVALID_ARGUMENT;
 	return pyrowave_encoder_encode_gpu_with_scale(encoder, acquire, release, buffers, rate_control,
 	                                              encoder->ycbcr_scaling_factor);
 }
@@ -1282,6 +1302,9 @@ pyrowave_encoder_encode_gpu_scaled(pyrowave_encoder encoder,
                                    const pyrowave_scaled_encode_info *scaling_info,
                                    const pyrowave_rate_control *rate_control)
 {
+	if (!encoder) return PYROWAVE_ERROR_INVALID_ARGUMENT;
+	FinePrequantResetGuard reset { encoder->encoder };
+	if (!scaling_info || !rate_control) return PYROWAVE_ERROR_INVALID_ARGUMENT;
 	Util::set_thread_logging_interface(&null_logger);
 
 	if (scaling_info->intermediate_plane_format != VK_FORMAT_R8_UNORM &&
@@ -1492,6 +1515,9 @@ pyrowave_result
 pyrowave_encoder_encode_cpu(pyrowave_encoder encoder, const pyrowave_cpu_buffer *buffers,
                             const pyrowave_rate_control *rate_control)
 {
+	if (!encoder) return PYROWAVE_ERROR_INVALID_ARGUMENT;
+	FinePrequantResetGuard reset { encoder->encoder };
+	if (!buffers || !rate_control) return PYROWAVE_ERROR_INVALID_ARGUMENT;
 	Util::set_thread_logging_interface(&null_logger);
 	int num_planes = buffers->format == PYROWAVE_CPU_BUFFER_FORMAT_NV12 ? 2 : 3;
 	auto *device = encoder->device;
