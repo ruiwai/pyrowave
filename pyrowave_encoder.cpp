@@ -476,7 +476,14 @@ bool Encoder::Impl::quant(CommandBuffer &cmd, float quant_scale)
 	cmd.set_program(shaders.wavelet_quant);
 
 	cmd.set_specialization_constant_mask(0);
-	if (device->supports_subgroup_size_log2(true, 3, 7))
+	// Experimental Intel SIMD8: one 8-lane cluster/block, limiting per-subgroup
+	// divergence and register demand; performance is unverified.
+	if (device->get_gpu_properties().vendorID == 0x8086 &&
+	    device->supports_subgroup_size_log2(true, 3, 3))
+	{
+		cmd.set_subgroup_size_log2(true, 3, 3);
+	}
+	else if (device->supports_subgroup_size_log2(true, 3, 7))
 	{
 		cmd.set_subgroup_size_log2(true, 3, 7);
 	}

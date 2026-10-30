@@ -215,3 +215,17 @@ the expression does not relicense unchanged upstream portions. See
 `NOTICE.md` and the complete license texts in `LICENSES/` for the scope and
 redistribution terms.
 
+### Experimental Intel quant-only SIMD8 candidate
+
+On Intel (vendor ID 0x8086), quantization requests SIMD8 when supported:
+one 8-lane cluster per block, aiming to limit per-subgroup divergence and
+register demand, not asserting actual driver occupancy. Otherwise the existing
+subgroup-size selection and unsupported-device failure path are unchanged.
+Other vendors and stages, shaders, operations and precision are unchanged.
+Narrower subgroups may cost SIMD utilization. Performance is unverified;
+there is no GPU validation or speedup claim for this candidate.
+On a healthy device, compare the existing `pyrowave-bench` before/after with
+the same `PYROWAVE_PRECISION=1`, device, input and benchmark configuration.
+Its repeated fixed static input is not representative of live changing frames;
+check completed timing output, not just the process exit status.
+
