@@ -242,3 +242,18 @@ compile a candidate with `slangmosh --output <candidate> shaders/slangmosh.json
 --namespace PyroWave -O --strip`, splice only its quant module, append its quant
 reflection to the old reflection bank, and update offsets/only the quant reflection
 reference. The artifact-only merge script validates ranges and per-entry hashes.
+
+### Experimental coarse RDO
+
+Each Encoder defaults to coarse RDO; set `PYROWAVE_RDO_FULL_SEARCH=1` before
+construction for the original full search. Only the exact value `1` disables it;
+the environment is read once per constructor, not per frame.
+Coarse mode skips odd quant candidates 1 through 13, retaining even candidates
+and the original terminal candidate 15. Selected costs, precision, quantization
+and decoding are unchanged; rate/quality choices may differ. No GPU validation,
+quality equivalence or performance improvement is claimed.
+Known preexisting limitation: extreme `encode_pre_transformed` inputs can overflow
+`errors[15]`; this optimization does not fix or validate that unsafe path. The
+checked domain is baseline-in-bounds stats (num_planes 0 through 14), not all inputs.
+Regeneration replaces only quant/analyze modules and appends their reflections,
+preserving the other 23 entries and existing reflection aliases.

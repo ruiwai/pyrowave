@@ -11,6 +11,8 @@
 #include <algorithm>
 #include <cmath>
 #include <cstddef>
+#include <cstdlib>
+#include <cstring>
 
 namespace PyroWave
 {
@@ -119,6 +121,7 @@ struct Encoder::Impl final : public WaveletBuffers
 
 	uint32_t sequence_count = 0;
 	bool native_fp16 = false;
+	bool coarse_rdo = true;
 	BitstreamColorMetadata color_metadata {};
 
 	// At low bits-per-pixel targets the default CSF weighting is intentionally
@@ -409,6 +412,8 @@ bool Encoder::Impl::analyze_rdo(CommandBuffer &cmd)
 	auto start_analyze = cmd.write_timestamp(VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT);
 	cmd.begin_region("DWT analyze");
 	cmd.set_program(shaders.analyze_rate_control);
+	cmd.set_specialization_constant_mask(1u << 2);
+	cmd.set_specialization_constant(2, coarse_rdo);
 
 	if (device->supports_subgroup_size_log2(true, 4, 6))
 	{
@@ -467,6 +472,7 @@ bool Encoder::Impl::analyze_rdo(CommandBuffer &cmd)
 	cmd.barrier(VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT,
 	            VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_2_SHADER_STORAGE_READ_BIT);
 
+	cmd.set_specialization_constant_mask(0);
 	cmd.set_program(shaders.analyze_rate_control_finalize);
 	cmd.dispatch(1, 1, 1);
 
@@ -485,7 +491,8 @@ bool Encoder::Impl::quant(CommandBuffer &cmd, float quant_scale)
 	cmd.begin_region("DWT quantize");
 	cmd.set_program(shaders.wavelet_quant);
 
-	cmd.set_specialization_constant_mask(0);
+	cmd.set_specialization_constant_mask(1u << 2);
+	cmd.set_specialization_constant(2, coarse_rdo);
 	// Experimental Intel SIMD8: one 8-lane cluster/block, limiting per-subgroup
 	// divergence and register demand; performance is unverified.
 	if (device->get_gpu_properties().vendorID == 0x8086 &&
@@ -548,6 +555,7 @@ bool Encoder::Impl::quant(CommandBuffer &cmd, float quant_scale)
 		}
 	}
 
+	cmd.set_specialization_constant_mask(0);
 	cmd.end_region();
 	cmd.barrier(VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT,
 	            VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_2_SHADER_STORAGE_READ_BIT);
@@ -1302,6 +1310,8 @@ bool Encoder::Impl::encode(CommandBuffer &cmd, const ViewBuffers &views, const B
 Encoder::Encoder()
 {
 	impl.reset(new Impl);
+	const char *full_search = std::getenv("PYROWAVE_RDO_FULL_SEARCH");
+	impl->coarse_rdo = !full_search || std::strcmp(full_search, "1") != 0;
 }
 
 bool Encoder::init(Device *device, int width_, int height_, ChromaSubsampling chroma_)
