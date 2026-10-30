@@ -76,14 +76,26 @@ struct AnalyzeRateControlPushData
 {
 	ivec2 resolution;
 	ivec2 resolution_8x8_blocks;
-	int32_t block_offset_8x8;
+	ivec4 block_offset_8x8;
+	ivec4 block_offset_32x32;
 	int32_t block_stride_8x8;
-	int32_t block_offset_32x32;
 	int32_t block_stride_32x32;
 	uint32_t total_wg_count;
 	uint32_t num_blocks_aligned;
 	uint32_t block_index_shamt;
+	uint32_t first_band;
 };
+static_assert(sizeof(AnalyzeRateControlPushData) >= 72 && sizeof(AnalyzeRateControlPushData) <= 80);
+static_assert(offsetof(AnalyzeRateControlPushData, resolution) == 0);
+static_assert(offsetof(AnalyzeRateControlPushData, resolution_8x8_blocks) == 8);
+static_assert(offsetof(AnalyzeRateControlPushData, block_offset_8x8) == 16);
+static_assert(offsetof(AnalyzeRateControlPushData, block_offset_32x32) == 32);
+static_assert(offsetof(AnalyzeRateControlPushData, block_stride_8x8) == 48);
+static_assert(offsetof(AnalyzeRateControlPushData, block_stride_32x32) == 52);
+static_assert(offsetof(AnalyzeRateControlPushData, total_wg_count) == 56);
+static_assert(offsetof(AnalyzeRateControlPushData, num_blocks_aligned) == 60);
+static_assert(offsetof(AnalyzeRateControlPushData, block_index_shamt) == 64);
+static_assert(offsetof(AnalyzeRateControlPushData, first_band) == 68);
 
 struct RDOperation
 {
@@ -463,30 +475,27 @@ bool Encoder::Impl::analyze_rdo(CommandBuffer &cmd)
 			snprintf(label, sizeof(label), "level %d, component %d", level, component);
 			cmd.begin_region(label);
 
-			for (int band = (level == DecompositionLevels - 1 ? 0 : 1); band < 4; band++)
+			auto level_width = wavelet_img_high_res->get_width(level);
+			auto level_height = wavelet_img_high_res->get_height(level);
+			push.resolution = ivec2(level_width, level_height);
+			push.resolution_8x8_blocks = ivec2((level_width + 7) / 8, (level_height + 7) / 8);
+			push.first_band = level == DecompositionLevels - 1 ? 0 : 1;
+			const auto &meta = block_meta[component][level][push.first_band];
+			push.block_stride_8x8 = meta.block_stride_8x8;
+			push.block_stride_32x32 = meta.block_stride_32x32;
+			push.total_wg_count = block_count_32x32;
+			push.num_blocks_aligned = compute_block_count_per_subdivision(block_count_32x32) * BlockSpaceSubdivision;
+			push.block_index_shamt = Util::floor_log2(compute_block_count_per_subdivision(block_count_32x32));
+			for (int band = push.first_band; band < 4; band++)
 			{
-				auto level_width = wavelet_img_high_res->get_width(level);
-				auto level_height  = wavelet_img_high_res->get_height(level);
-
-				push.resolution.x = level_width;
-				push.resolution.y = level_height;
-				push.resolution_8x8_blocks.x = (level_width + 7) / 8;
-				push.resolution_8x8_blocks.y = (level_height + 7) / 8;
-				push.block_offset_8x8 = block_meta[component][level][band].block_offset_8x8;
-				push.block_stride_8x8 = block_meta[component][level][band].block_stride_8x8;
-				push.block_offset_32x32 = block_meta[component][level][band].block_offset_32x32;
-				push.block_stride_32x32 = block_meta[component][level][band].block_stride_32x32;
-				push.total_wg_count = block_count_32x32;
-				push.num_blocks_aligned = compute_block_count_per_subdivision(block_count_32x32) * BlockSpaceSubdivision;
-				push.block_index_shamt = Util::floor_log2(compute_block_count_per_subdivision(block_count_32x32));
-
-				cmd.push_constants(&push, 0, sizeof(push));
-
-				cmd.set_storage_buffer(0, 0, *bucket_buffer);
-				cmd.set_storage_buffer(0, 1, *block_stat_buffer);
-
-				cmd.dispatch((level_width + 31) / 32, (level_height + 31) / 32, 1);
+				push.block_offset_8x8[band] = block_meta[component][level][band].block_offset_8x8;
+				push.block_offset_32x32[band] = block_meta[component][level][band].block_offset_32x32;
 			}
+
+			cmd.push_constants(&push, 0, sizeof(push));
+			cmd.set_storage_buffer(0, 0, *bucket_buffer);
+			cmd.set_storage_buffer(0, 1, *block_stat_buffer);
+			cmd.dispatch((level_width + 31) / 32, (level_height + 31) / 32, 4 - push.first_band);
 
 			cmd.end_region();
 		}

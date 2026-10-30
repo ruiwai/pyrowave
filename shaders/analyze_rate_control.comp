@@ -57,14 +57,18 @@ layout(push_constant) uniform Registers
 {
     ivec2 resolution;
     ivec2 resolution_8x8_blocks;
-    int block_offset_8x8;
+    ivec4 block_offset_8x8;
+    ivec4 block_offset_32x32;
     int block_stride_8x8;
-    int block_offset_32x32;
     int block_stride_32x32;
     uint total_wg_count;
     uint num_blocks_aligned;
     uint block_index_shamt;
+    uint first_band;
 } registers;
+
+int block_offset_8x8;
+int block_offset_32x32;
 
 shared uint shared_rate_cost[16];
 shared float shared_distortion[16];
@@ -137,7 +141,7 @@ void emit_rdo_operations()
         if (saving != 0)
         {
             ivec2 block32x32_index = ivec2(gl_WorkGroupID.xy);
-            int block_index = registers.block_offset_32x32 +
+            int block_index = block_offset_32x32 +
                 block32x32_index.y * registers.block_stride_32x32 + block32x32_index.x;
             uint subdivision = block_index >> registers.block_index_shamt;
             atomicAdd(buckets.total_savings_per_bucket[inclusive_bucket_index * BLOCK_SPACE_SUBDIVISION + subdivision], saving);
@@ -149,6 +153,9 @@ void emit_rdo_operations()
 
 void main()
 {
+    uint band = registers.first_band + gl_WorkGroupID.z;
+    block_offset_8x8 = registers.block_offset_8x8[band];
+    block_offset_32x32 = registers.block_offset_32x32[band];
     // Each workgroup processes a 64x64 block and computes all possible rate wins for every potential quant rate.
     uint index = gl_SubgroupInvocationID + gl_SubgroupSize * gl_SubgroupID;
     ivec2 block32x32_index = ivec2(gl_WorkGroupID.xy);
@@ -158,7 +165,7 @@ void main()
     uint num_active_planes;
 
     bool block8x8_in_range = all(lessThan(block8x8_index, registers.resolution_8x8_blocks));
-    int block_index_8x8 = registers.block_offset_8x8 +
+    int block_index_8x8 = block_offset_8x8 +
         registers.block_stride_8x8 * block8x8_index.y +
         block8x8_index.x;
 

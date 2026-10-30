@@ -279,3 +279,14 @@ remain unchanged. Noise normalization, distortion weighting, shaders, decoding
 and the existing budget resolver are unchanged; no stronger bitrate guarantee is
 introduced. Texture and text can soften; quality loss is not guaranteed small.
 No measured performance improvement or GPU/quality validation is claimed.
+
+### Experimental analysis band batching
+
+Analysis batches active bands per component/level in Z (420: 42 to 13
+dispatches; 444: 48 to 15). Each Z group uses its original disjoint 8x8/32x32
+metadata and RDO destinations; global bucket atomics remain commutative.
+Math, coarse-search remapping, quant stats and finalize are unchanged; no extra
+quality loss is intended. GPU quality and performance remain unverified.
+Regenerate a candidate with `slangmosh --output <candidate> shaders/slangmosh.json
+--namespace PyroWave -O --strip`; replace only analysis and append its reflection,
+preserving the other 24 modules/reflections exactly.
