@@ -13,6 +13,7 @@
 
 layout(local_size_x = 64) in;
 layout(constant_id = 2) const bool CoarseRDO = false;
+layout(constant_id = 3) const uint CoarseStep = 2u;
 
 struct BlockMeta
 {
@@ -181,7 +182,7 @@ void main()
 
         if (block8x8_in_range)
         {
-            uint candidate = CoarseRDO && i < 15 ? (i & ~1u) : i;
+            uint candidate = CoarseRDO && i < 15 ? (i & ~(CoarseStep - 1u)) : i;
             QuantStats stats = block_stats.stats[block_index_8x8].errors[min(candidate, num_active_planes)];
             dist = float(stats.square_error);
             cost = uint(stats.payload_cost);

@@ -18,6 +18,7 @@
 layout(local_size_x = 128) in;
 layout(constant_id = 1) const bool SkipQuantScale = false;
 layout(constant_id = 2) const bool CoarseRDO = false;
+layout(constant_id = 3) const uint CoarseStep = 2u;
 
 layout(set = 0, binding = 0) uniform sampler2DArray uTexture;
 
@@ -244,7 +245,7 @@ void encode_payload(ivec2 block_index_8x8, mat2x4 texels)
 
     for (int q = 1; q <= msb; q++)
     {
-        if (CoarseRDO && q < 15 && (q & 1) != 0)
+        if (CoarseRDO && q < 15 && (q & int(CoarseStep - 1u)) != 0)
             continue;
         QuantResult quant_result = compute_quant_stats(texels, q, msb, block4x2_max, inv_quant_squared);
         float square_error = subgroupClusteredAdd(quant_result.square_error, 8);

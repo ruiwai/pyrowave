@@ -290,3 +290,18 @@ quality loss is intended. GPU quality and performance remain unverified.
 Regenerate a candidate with `slangmosh --output <candidate> shaders/slangmosh.json
 --namespace PyroWave -O --strip`; replace only analysis and append its reflection,
 preserving the other 24 modules/reflections exactly.
+
+### Experimental aggressive quantization
+
+Enabled by default only on the existing per-frame borrowed-VDD direct gate and
+<= 2 bpp payload profile. Fine non-LL bands at levels 0/1 use one quarter of the
+precision-capped resolution (two-bit prequantization) and coarse RDO step 4,
+retaining candidates 0/4/8/12/15. LL and deeper levels retain step 2.
+Quality worsening may be visible; no measured speed improvement is claimed.
+Before constructing the Encoder, test `PYROWAVE_AGGRESSIVE_QUANT=0` to restore
+all previous quantization behavior, including one-bit prequantization and step 2.
+Only exact `0` disables aggression; unset and other values enable it.
+`PYROWAVE_FINE_PREQUANT=0` disables both new aggressive changes by clearing
+fine-band eligibility. `PYROWAVE_RDO_FULL_SEARCH=1` evaluates all candidates,
+but prequantization still applies. All three variables are read once at
+construction; set them beforehand. Other frames and capture remain unchanged.

@@ -142,6 +142,7 @@ struct Encoder::Impl final : public WaveletBuffers
 	uint32_t sequence_count = 0;
 	bool native_fp16 = false;
 	bool coarse_rdo = true;
+	bool aggressive_quant = true;
 	bool fine_prequant_enabled = true;
 	bool fine_prequant_active = false;
 	bool fine_prequant_next_frame = false;
@@ -248,7 +249,7 @@ float Encoder::Impl::get_quant_resolution(int level, int component, int band) co
 			precision >= 1 ? 4096.0f : 512.0f,
 			get_noise_power_normalized_quant_resolution(level, component, band));
 	if (fine_prequant_active && level < 2 && band != 0)
-		resolution *= 0.5f;
+		resolution *= aggressive_quant ? 0.25f : 0.5f;
 	return resolution;
 }
 
@@ -447,7 +448,7 @@ bool Encoder::Impl::analyze_rdo(CommandBuffer &cmd)
 	auto start_analyze = cmd.write_timestamp(VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT);
 	cmd.begin_region("DWT analyze");
 	cmd.set_program(shaders.analyze_rate_control);
-	cmd.set_specialization_constant_mask(1u << 2);
+	cmd.set_specialization_constant_mask((1u << 2) | (1u << 3));
 	cmd.set_specialization_constant(2, coarse_rdo);
 
 	if (device->supports_subgroup_size_log2(true, 4, 6))
@@ -463,6 +464,7 @@ bool Encoder::Impl::analyze_rdo(CommandBuffer &cmd)
 	// Quantize
 	for (int level = 0; level < DecompositionLevels; level++)
 	{
+		cmd.set_specialization_constant(3, aggressive_quant && fine_prequant_active && level < 2 ? 4u : 2u);
 		for (int component = 0; component < NumComponents; component++)
 		{
 			// Ignore top-level CbCr when doing 420 subsampling.
@@ -523,7 +525,7 @@ bool Encoder::Impl::quant(CommandBuffer &cmd, float quant_scale)
 	cmd.begin_region("DWT quantize");
 	cmd.set_program(shaders.wavelet_quant);
 
-	cmd.set_specialization_constant_mask(1u << 2);
+	cmd.set_specialization_constant_mask((1u << 2) | (1u << 3));
 	cmd.set_specialization_constant(2, coarse_rdo);
 	// Experimental Intel SIMD8: one 8-lane cluster/block, limiting per-subgroup
 	// divergence and register demand; performance is unverified.
@@ -545,6 +547,7 @@ bool Encoder::Impl::quant(CommandBuffer &cmd, float quant_scale)
 	// Quantize
 	for (int level = 0; level < DecompositionLevels; level++)
 	{
+		cmd.set_specialization_constant(3, aggressive_quant && fine_prequant_active && level < 2 ? 4u : 2u);
 		for (int component = 0; component < NumComponents; component++)
 		{
 			// Ignore top-level CbCr when doing 420 subsampling.
@@ -1344,6 +1347,8 @@ Encoder::Encoder()
 	impl.reset(new Impl);
 	const char *full_search = std::getenv("PYROWAVE_RDO_FULL_SEARCH");
 	impl->coarse_rdo = !full_search || std::strcmp(full_search, "1") != 0;
+	const char *aggressive = std::getenv("PYROWAVE_AGGRESSIVE_QUANT");
+	impl->aggressive_quant = !aggressive || std::strcmp(aggressive, "0") != 0;
 	const char *fine_prequant = std::getenv("PYROWAVE_FINE_PREQUANT");
 	impl->fine_prequant_enabled = !fine_prequant || std::strcmp(fine_prequant, "0") != 0;
 }
